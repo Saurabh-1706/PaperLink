@@ -1,0 +1,15 @@
+node_modules
+.next
+out
+.env
+.env.local
+*.log
+
+# Python / FastAPI
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.venv/
+.pytest_cache/

@@ -1,0 +1,125 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .font-handwriting {
+    font-family: var(--font-handwriting), "Kalam", cursive;
+  }
+  .font-sans-main {
+    font-family: var(--font-sans-main), -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+}
+
+:root {
+  /* Strong ease-out for entrances/exits — built-in ease-out is too weak */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  /* Strong ease-in-out for on-screen movement/morphing (accordions, crossfades) */
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Lined notebook paper background, used behind the scanned answer sheet page */
+.notebook-paper-pattern {
+  background-color: #fdfbf7;
+  background-image: linear-gradient(#f0ebe1 1px, transparent 1px),
+    linear-gradient(90deg, transparent 48px, #fca5a5 48px, #fca5a5 49px, transparent 49px);
+  background-size: 100% 32px, 100% 100%;
+}
+
+/* ---- Shared entrance animation ---------------------------------------- */
+/* Used for: a file card replacing a dropzone, a stage transition, the
+   answer-sheet highlight box appearing. Never scale(0) — start visible-ish. */
+@layer utilities {
+  .enter-fade-in {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    transition: opacity 200ms var(--ease-out), transform 200ms var(--ease-out);
+
+    @starting-style {
+      opacity: 0;
+      transform: scale(0.96) translateY(4px);
+    }
+  }
+
+  /* Accordion-style expand/collapse without animating height directly */
+  .accordion-rows {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 200ms var(--ease-in-out);
+  }
+  .accordion-rows[data-open="true"] {
+    grid-template-rows: 1fr;
+  }
+  .accordion-rows > div {
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  /* Base UI Dialog (mobile nav drawer): Base UI sets data-open/data-closed and
+     data-starting-style/data-ending-style on Backdrop/Popup — we only need to
+     supply the CSS transition between those states. It waits for the
+     transition to finish before unmounting on close. */
+  .dialog-backdrop {
+    opacity: 1;
+    transition: opacity 200ms var(--ease-out);
+  }
+  .dialog-backdrop[data-starting-style],
+  .dialog-backdrop[data-ending-style] {
+    opacity: 0;
+  }
+
+  .dialog-panel-slide-left {
+    transform: translateX(0);
+    transition: transform 200ms var(--ease-out);
+  }
+  .dialog-panel-slide-left[data-starting-style],
+  .dialog-panel-slide-left[data-ending-style] {
+    transform: translateX(-100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .enter-fade-in {
+    transition: opacity 200ms ease;
+
+    @starting-style {
+      opacity: 0;
+      transform: none;
+    }
+  }
+  .accordion-rows {
+    transition: grid-template-rows 120ms ease;
+  }
+  .dialog-backdrop,
+  .dialog-panel-slide-left {
+    transition: opacity 120ms ease;
+    transform: none;
+  }
+  .dialog-panel-slide-left[data-starting-style],
+  .dialog-panel-slide-left[data-ending-style] {
+    transform: none;
+    opacity: 0;
+  }
+}
