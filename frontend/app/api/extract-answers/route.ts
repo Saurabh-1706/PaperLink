@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAnswerProvider } from "@/lib/ai/provider";
-import type { PageImage, Question, RawAnswerBlock } from "@/lib/types";
+import type { PageImage, Question, RawAnswerBlock } from "@/types";
 
 export const runtime = "nodejs";
 // Rate-limit retries in lib/ai/*.ts can each wait up to ~45s, and a multi-page

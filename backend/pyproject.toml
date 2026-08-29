@@ -1,0 +1,32 @@
+[project]
+name = "assessment-backend"
+version = "1.0.0"
+description = "AI assessment extraction and answer mapping backend"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+filterwarnings = ["ignore::DeprecationWarning", "ignore::UserWarning"]
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+  "B008",  # FastAPI dependencies are call-in-default by design
+  "B905",  # zip() over offset slices is intentionally ragged
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = false
+plugins = []
+exclude = "(migrations|tests)"

@@ -1,4 +1,4 @@
-import type { PageImage, Question, RawAnswerBlock } from "../types";
+import type { PageImage, Question, RawAnswerBlock } from "@/types";
 
 export interface AiProvider {
   name: string;

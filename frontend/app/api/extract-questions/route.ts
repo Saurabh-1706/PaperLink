@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getProvider } from "@/lib/ai/provider";
-import type { PageImage } from "@/lib/types";
+import type { PageImage } from "@/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;

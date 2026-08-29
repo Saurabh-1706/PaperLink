@@ -1,0 +1,27 @@
+services:
+  # MongoDB is NOT containerised: this project uses the MongoDB server installed on the
+  # host (Windows service "MongoDB", port 27017). Containers reach it through
+  # host.docker.internal; the extra_hosts entry makes that name resolve on Linux too,
+  # where Docker Desktop does not provide it for free.
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: docker/Dockerfile.api
+    env_file: ./backend/.env
+    ports: ["8000:8000"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on:
+      redis: {condition: service_started}
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: docker/Dockerfile.worker
+    env_file: ./backend/.env
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on:
+      redis: {condition: service_started}
