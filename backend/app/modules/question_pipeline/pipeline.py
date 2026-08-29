@@ -20,6 +20,15 @@ MARKS_PATTERNS = [
     re.compile(r"[\[\(]\s*(\d{1,3})\s*[\]\)]\s*$"),
 ]
 
+# Blocks that are page furniture rather than question text. A printed paper puts its
+# marks in a right-hand column and its section headings on their own line; both land
+# inside the preceding question's block span. Left in, they corrupt the body text, they
+# stretch the question's region across the full page width, and a trailing section
+# heading pushes the marks marker off the end of the string where `MARKS_PATTERNS`
+# can no longer see it.
+MARKS_ONLY = re.compile(r"^\s*[\[\(]\s*(\d{1,3})\s*[\]\)]\s*$")
+SECTION_HEADER = re.compile(r"^\s*sections?\b.{0,8}$", re.IGNORECASE)
+
 OPTIONAL_PATTERNS = [
     re.compile(r"\battempt\s+any\b", re.IGNORECASE),
     re.compile(r"\banswer\s+any\b", re.IGNORECASE),
@@ -83,24 +92,33 @@ def _assign_bodies(
         head_text = candidate.label.remainder
         body_parts = [head_text] if head_text else []
         block_ids = [candidate.block.block_id]
-        for _, block in span[1:]:
+        content: list[tuple[int, IRBlock]] = [span[0]]
+        marks_from_column: float | None = None
+        for page, block in span[1:]:
+            marks_marker = MARKS_ONLY.match(block.text)
+            if marks_marker:
+                marks_from_column = float(marks_marker.group(1))
+                continue
+            if SECTION_HEADER.match(block.text):
+                continue
             body_parts.append(block.text)
             block_ids.append(block.block_id)
+            content.append((page, block))
         text = " ".join(part for part in body_parts if part).strip()
 
-        regions = _regions_for(span)
-        confidences = [block.confidence for _, block in span] or [1.0]
+        regions = _regions_for(content)
+        confidences = [block.confidence for _, block in content] or [1.0]
         questions.append(
             ExtractedQuestion(
                 question_id=f"q-{candidate.label.normalized}-{index}",
                 display_number=candidate.label.display.rstrip(" .:"),
                 normalized_number=candidate.label.normalized,
                 text=text,
-                pages=sorted({page for page, _ in span}),
+                    pages=sorted({page for page, _ in content}),
                 regions=regions,
                 order_index=index,
                 optional=_is_optional(text),
-                max_marks=_detect_marks(text),
+                max_marks=_detect_marks(text) or marks_from_column,
                 confidence=round(min(1.0, sum(confidences) / len(confidences)), 4),
                 block_ids=block_ids,
             )
@@ -136,9 +154,11 @@ def _apply_hierarchy(questions: list[ExtractedQuestion]) -> list[ExtractedQuesti
         elif stem_top is not None:
             is_roman = all(char.isalpha() and char in "ivx" for char in parts[0]) and len(parts[0]) > 0
             if is_roman and stem_sub:
-                normalized = f"{stem_top}.{stem_sub}.{parts[0]}"
+                normalized = ".".join([stem_top, stem_sub, *parts])
             else:
-                normalized = f"{stem_top}.{parts[0]}"
+                # `a) i)` arrives as `a.i`: the letter re-bases the sub stem and every
+                # deeper level is kept. Taking parts[0] alone silently dropped the roman.
+                normalized = ".".join([stem_top, *parts])
                 stem_sub = parts[0]
         else:
             normalized = question.normalized_number
@@ -184,8 +204,16 @@ def detect_ambiguities(questions: list[ExtractedQuestion]) -> list[str]:
     for previous, current in zip(unique_tops, unique_tops[1:]):
         if current - previous > 1:
             issues.append(f"gap_between_{previous}_and_{current}")
+    # A parent that prints only `Q2.` and leaves the wording to `a)` / `b)` is the normal
+    # shape of a sectioned paper, not an ambiguity worth spending a model call on.
+    # Match on prefix, not on `parent_number`: a paper that prints `Q12.` then `b) i)`
+    # produces `12.b.i` with no intervening `12.b` row, so `12` is an ancestor without
+    # ever being anyone's direct parent.
+    numbers = [question.normalized_number for question in questions]
     for question in questions:
-        if not question.text.strip():
+        stem = f"{question.normalized_number}."
+        has_children = any(number.startswith(stem) for number in numbers)
+        if not question.text.strip() and not has_children:
             issues.append(f"empty_body:{question.normalized_number}")
         if question.confidence < settings.question_confidence_threshold:
             issues.append(f"low_confidence:{question.normalized_number}")

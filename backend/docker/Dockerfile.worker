@@ -1,11 +1,29 @@
-FROM python:3.12-slim
+# ── Stage 1: deps ────────────────────────────────────────────────────────────
+FROM python:3.12-slim AS deps
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
-# PaddleOCR, PyMuPDF and poppler are painful natively on Windows; they live here instead.
+
+# build-essential + libgomp1 needed to compile PaddleOCR / native extensions
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential libglib2.0-0 libgl1 libgomp1 poppler-utils \
     && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# ── Stage 2: runtime ─────────────────────────────────────────────────────────
+FROM python:3.12-slim AS runtime
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+WORKDIR /app
+
+# Runtime-only system libs (no build-essential)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libglib2.0-0 libgl1 libgomp1 poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=deps /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=deps /usr/local/bin /usr/local/bin
+
 COPY . .
+
 CMD ["celery", "-A", "app.workers.celery_app.celery_app", "worker", "--loglevel=INFO"]

@@ -17,11 +17,11 @@ from app.modules.documents.service import DocumentService
 from app.schemas.common import DocumentKind
 from app.storage.factory import get_storage
 
-DEMO_PASSWORD = "demo-password-1"
+DEMO_PASSWORD = "Pass@123"
 DEMO_USERS = [
-    ("admin@demo.example.com", Role.ADMIN),
-    ("teacher@demo.example.com", Role.TEACHER),
-    ("reviewer@demo.example.com", Role.REVIEWER),
+    ("admin@gmail.com", Role.ADMIN),
+    ("teacher@gmail.com", Role.TEACHER),
+    ("reviewer@gmail.com", Role.REVIEWER),
 ]
 
 
@@ -38,7 +38,7 @@ def main() -> None:
             email: auth.create_user(organization.id, email, DEMO_PASSWORD, role)
             for email, role in DEMO_USERS
         }
-        teacher = users["teacher@demo.example.com"]
+        teacher = users["teacher@gmail.com"]
         print(f"organization={organization.id}")
         for email in users:
             print(f"user={email} password={DEMO_PASSWORD}")

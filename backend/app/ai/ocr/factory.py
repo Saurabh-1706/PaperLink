@@ -20,6 +20,10 @@ def get_ocr_engine() -> OCREngine:
         from app.ai.ocr.paddle import PaddleOCREngine
 
         return PaddleOCREngine()
+    if settings.ocr_engine == "rapid":
+        from app.ai.ocr.rapid import RapidOCREngine
+
+        return RapidOCREngine()
     if settings.ocr_engine == "stub":
         from app.ai.ocr.stub import StubOCREngine
 

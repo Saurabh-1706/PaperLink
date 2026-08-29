@@ -13,7 +13,9 @@ ROMAN_VALUES = {"i": 1, "v": 5, "x": 10, "l": 50, "c": 100, "d": 500, "m": 1000}
 # Ordered by specificity: the first pattern that matches at the start of a line wins.
 _TOP_LEVEL = r"(?:Q(?:ues(?:tion)?)?\s*\.?\s*)?(?P<num>\d{1,3})"
 _SUB = r"(?:\s*[\(\[]?\s*(?P<sub>[a-hA-H])\s*[\)\].]?)"
-_SUBSUB = r"(?:\s*[\(\[]\s*(?P<subsub>[ivxIVX]{1,4})\s*[\)\].]?)"
+# The opening bracket is optional: real papers print `(i)` and `i)` interchangeably,
+# and a bare `ii)` heading a line is by far the commoner of the two.
+_SUBSUB = r"(?:\s*[\(\[]?\s*(?P<subsub>[ivxIVX]{1,4})\s*[\)\].])"
 
 PATTERNS: list[re.Pattern[str]] = [
     re.compile(rf"^\s*{_TOP_LEVEL}{_SUB}{_SUBSUB}\s*[\.\):]?\s*", re.IGNORECASE),
@@ -23,8 +25,17 @@ PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"^\s*Q(?:ues(?:tion)?)?\s*\.?\s*(?P<num>\d{1,3})\s*[\.\):]?\s+", re.IGNORECASE),
     re.compile(rf"^\s*{_TOP_LEVEL}\s*$", re.IGNORECASE),
     re.compile(r"^\s*[\(\[]\s*(?P<subsub>[ivx]{1,4})\s*[\)\].]\s*", re.IGNORECASE),
+    # `a) i) ...` — one block carrying both levels. Without this the roman level is
+    # swallowed into the body and `12.b.ii` never becomes a row of its own.
+    re.compile(
+        r"^\s*[\(\[]?\s*(?P<sub>[a-h])\s*[\)\].]\s*[\(\[]?\s*(?P<subsub>[ivx]{1,4})\s*[\)\].]\s+",
+        re.IGNORECASE,
+    ),
     re.compile(r"^\s*[\(\[]\s*(?P<sub>[a-h])\s*[\)\].]\s*", re.IGNORECASE),
     re.compile(r"^\s*(?P<sub>[a-h])\s*[\)\.]\s+", re.IGNORECASE),
+    # Bare roman, no brackets: `ii) Write the ...`. Kept last so `i` is only read as a
+    # roman numeral once every lettered reading has been ruled out.
+    re.compile(r"^\s*(?P<subsub>[ivx]{1,4})\s*[\)\.]\s+", re.IGNORECASE),
 ]
 
 # Answer sheets add "Ans" / "Answer" prefixes.
