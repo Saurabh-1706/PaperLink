@@ -6,8 +6,9 @@ import { useAssessmentPipeline, type AssessmentPipeline } from "../hooks/useAsse
 const AssessmentContext = createContext<AssessmentPipeline | null>(null);
 
 /**
- * Holds one in-flight assessment run. Nothing is persisted server-side, so the
- * run lives here for the lifetime of the mounted route.
+ * Holds one assessment run. The run itself lives on the API (MongoDB + GridFS)
+ * and is addressed by `assessmentId`; this context is the client's cache of it
+ * for the lifetime of the mounted route.
  */
 export function AssessmentProvider({ children }: { children: React.ReactNode }) {
   const pipeline = useAssessmentPipeline();

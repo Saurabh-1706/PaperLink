@@ -22,7 +22,10 @@ const questions: Question[] = [
 
 const mappings: MappedAnswer[] = [
   {
+    mappingId: "m1",
     questionId: "q1",
+    answerId: "a1",
+    reviewStatus: "auto_accepted",
     questionNumber: "1",
     status: "answered",
     answerText: "Photosynthesis happens in the chloroplast.",
@@ -34,7 +37,10 @@ const mappings: MappedAnswer[] = [
     confidence: 0.94,
   },
   {
+    mappingId: "m2",
     questionId: "q2",
+    answerId: "a2",
+    reviewStatus: "needs_review",
     questionNumber: "2",
     status: "answered",
     answerText: "Mitochondria make ATP.",
@@ -45,12 +51,22 @@ const mappings: MappedAnswer[] = [
     feedback: "Partly right; does not mention respiration.",
     confidence: 0.61,
   },
-  { questionId: "q3", questionNumber: "3", status: "unanswered" },
+  {
+    mappingId: "m3",
+    questionId: "q3",
+    answerId: null,
+    reviewStatus: "auto_accepted",
+    questionNumber: "3",
+    status: "unanswered",
+  },
 ];
 
 const unmatched: MappedAnswer[] = [
   {
+    mappingId: "m4",
     questionId: null,
+    answerId: "a4",
+    reviewStatus: "needs_review",
     questionNumber: null,
     status: "unmatched",
     answerText: "Cells are the basic unit of life.",

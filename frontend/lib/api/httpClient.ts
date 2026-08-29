@@ -9,10 +9,18 @@ import { ApiError, toApiError } from "./errors";
 
 export interface RequestOptions {
   method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
+  /** JSON by default; a `FormData` body is sent as multipart untouched. */
   body?: unknown;
   signal?: AbortSignal;
   /** Internal: prevents an infinite refresh loop. */
   _retried?: boolean;
+}
+
+/** The browser sets multipart's boundary itself — naming a content-type breaks it. */
+function encodeBody(body: unknown): { body?: BodyInit; headers?: HeadersInit } {
+  if (body === undefined) return {};
+  if (body instanceof FormData) return { body };
+  return { body: JSON.stringify(body), headers: { "content-type": "application/json" } };
 }
 
 /**
@@ -37,13 +45,15 @@ async function refreshSession(): Promise<boolean> {
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = "GET", body, signal } = options;
 
+  const encoded = encodeBody(body);
+
   const res = await fetch(`${BASE_URL}${path}`, {
     method,
     signal,
     // Session cookies are httpOnly and set by the BFF; they ride along here.
     credentials: "same-origin",
-    headers: body === undefined ? undefined : { "content-type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    headers: encoded.headers,
+    body: encoded.body,
   });
 
   if (res.status === 401 && !options._retried && path !== endpoints.auth.refresh) {

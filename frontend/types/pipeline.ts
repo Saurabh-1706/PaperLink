@@ -1,19 +1,28 @@
-// Types for the assessment extraction & mapping pipeline.
+// Types for the assessment extraction & mapping pipeline, as the UI speaks it.
 //
-// The pipeline is stateless server-side: pages, questions and mappings live in
-// React state (see features/assessment/store) for the lifetime of a session.
+// The pipeline runs on the FastAPI service and everything it produces is
+// persisted (MongoDB + GridFS). These are the camelCase view of the wire shapes
+// in ./backend; `lib/api/adapters.ts` is the only thing that converts between
+// them. React state here is a cache of a run that exists server-side, not the
+// run itself — every record below carries the backend id it came from.
 
-/** One page rendered to a base64 image (JPEG, size-capped — see lib/pdf.ts), ready to send to a vision model. */
+import type { ReviewStatus } from "./backend";
+
+export type { ReviewStatus };
+
+/** One page of a document, as something an `<img>` can render. */
 export interface PageImage {
   pageIndex: number; // 0-based index within its source document
-  dataUrl: string; // "data:image/jpeg;base64,...."
+  /** URL of the page image rendered by the backend and stored in GridFS,
+   *  served through the authenticated proxy. */
+  dataUrl: string;
   width: number;
   height: number;
 }
 
 /** A single extracted question (labelled sub-parts are separate entries). */
 export interface Question {
-  id: string; // stable client-generated id
+  id: string; // backend question id
   number: string; // preserves original numbering, e.g. "11(a)"
   text: string;
   marks?: number | null;
@@ -26,33 +35,26 @@ export interface Question {
  * docs/03-coordinate-contract.md).
  */
 export interface AnswerRegion {
-  page: number; // 0-based index into the answer sheet's PageImage[]
+  page: number; // 0-based index into the answer sheet's PageImage[] (the wire is 1-based)
   x: number;
   y: number;
   width: number;
   height: number;
 }
 
-/**
- * One block of handwritten answer content the model found on the answer
- * sheet. `questionNumber` is the model's best reading of the label the
- * student wrote (or null if illegible/absent) *before* mapping is applied.
- */
-export interface RawAnswerBlock {
-  id: string;
-  questionNumberGuess: string | null;
-  confidence: number;
-  text: string;
-  regions: AnswerRegion[]; // can span multiple pages
-}
-
 export type MappingStatus = "answered" | "unanswered" | "unmatched";
 
 /** Final mapped + graded record joining a question to (maybe) an answer. */
 export interface MappedAnswer {
+  /** Backend mapping id — what a reviewer correction is PATCHed against. */
+  mappingId: string;
   questionId: string | null; // null only for "unmatched" orphan answers
   questionNumber: string | null;
+  /** Backend answer id; null when the question went unanswered. */
+  answerId: string | null;
   status: MappingStatus;
+  /** Whether a human has confirmed or corrected this mapping yet. */
+  reviewStatus: ReviewStatus;
   answerText?: string;
   regions?: AnswerRegion[];
   isCorrect?: boolean | null;
@@ -67,6 +69,8 @@ export interface GradingSummary {
   answered: number;
   unanswered: number;
   unmatched: number;
+  /** Mappings the engine flagged; these are never auto-graded. */
+  needsReview?: number;
   totalScore: number | null;
   maxScore: number | null;
   overallFeedback?: string;
