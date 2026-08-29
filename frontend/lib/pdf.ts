@@ -1,6 +1,6 @@
 "use client";
 
-import type { PageImage } from "./types";
+import type { PageImage } from "@/types";
 
 let workerConfigured = false;
 

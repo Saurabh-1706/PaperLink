@@ -1,4 +1,4 @@
-import type { PageImage, Question } from "../types";
+import type { PageImage, Question } from "@/types";
 
 export function parseDataUrl(dataUrl: string): { mediaType: string; base64: string } {
   const match = /^data:(.+?);base64,(.*)$/s.exec(dataUrl);

@@ -1,4 +1,4 @@
-import type { AnswerRegion, GradingSummary, MappedAnswer, Question, RawAnswerBlock } from "./types";
+import type { AnswerRegion, GradingSummary, MappedAnswer, Question, RawAnswerBlock } from "@/types";
 
 function normalizeNumber(n: string | null | undefined): string | null {
   if (!n) return null;

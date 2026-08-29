@@ -1,6 +1,6 @@
 "use client";
 
-import type { PageImage } from "./types";
+import type { PageImage } from "@/types";
 
 /**
  * Vision LLMs (GPT-4o, Claude, etc.) have no native pixel-grounding — asked to

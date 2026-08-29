@@ -1,4 +1,4 @@
-import type { PageImage, Question, RawAnswerBlock } from "../types";
+import type { PageImage, Question, RawAnswerBlock } from "@/types";
 import { v4 as uuid } from "uuid";
 import { QUESTION_EXTRACTION_PROMPT, buildGradingPrompt, extractJson, toImagePart } from "./shared";
 import type { AiProvider } from "./provider";

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getProvider } from "@/lib/ai/provider";
 import { buildMappings, buildSummary } from "@/lib/mapping";
-import type { Question, RawAnswerBlock } from "@/lib/types";
+import type { Question, RawAnswerBlock } from "@/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
