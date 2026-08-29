@@ -36,8 +36,11 @@ export async function POST(req: NextRequest) {
     });
     return res;
   } catch (err) {
+    // Keep the upstream code: a 503 from an unreachable API must not be
+    // reported to the UI as though the credentials were rejected.
     const status = err instanceof ApiError ? err.status : 500;
     const message = err instanceof ApiError ? err.message : "Login failed.";
-    return NextResponse.json({ error: { code: "authentication_failed", message } }, { status });
+    const code = err instanceof ApiError ? err.code : "authentication_failed";
+    return NextResponse.json({ error: { code, message } }, { status });
   }
 }

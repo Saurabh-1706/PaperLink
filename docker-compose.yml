@@ -25,3 +25,15 @@ services:
     extra_hosts: ["host.docker.internal:host-gateway"]
     depends_on:
       redis: {condition: service_started}
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports: ["3000:3000"]
+    environment:
+      # Server-side only: the BFF route handlers in app/api/* call the API from
+      # inside this container, where localhost is the container itself.
+      - BACKEND_API_URL=http://api:8000
+    depends_on:
+      - api

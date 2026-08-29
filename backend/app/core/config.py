@@ -29,9 +29,9 @@ class Settings(BaseSettings):
     llm_provider: Literal["gemini", "openai", "null"] = "null"
     gemini_api_key: str | None = None
     openai_api_key: str | None = None
-    llm_model: str = "gemini-2.0-flash"
+    llm_model: str = "gemini-flash-latest"
 
-    ocr_engine: Literal["paddle", "doctr", "stub"] = "paddle"
+    ocr_engine: Literal["paddle", "rapid", "doctr", "stub"] = "paddle"
 
     render_dpi: int = 300
     render_max_long_edge: int = 3000

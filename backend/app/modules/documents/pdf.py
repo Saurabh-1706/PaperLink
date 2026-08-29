@@ -83,15 +83,7 @@ def render_pages(data: bytes, dpi: int | None = None) -> list[PageRender]:
             import pymupdf
 
             pixmap = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
-            words = [
-                NativeWord(
-                    text=str(w[4]),
-                    x1=float(w[0]), y1=float(w[1]), x2=float(w[2]), y2=float(w[3]),
-                    block_no=int(w[5]), line_no=int(w[6]),
-                )
-                for w in page.get_text("words")
-                if str(w[4]).strip()
-            ]
+            words = _native_words(page)
             renders.append(
                 PageRender(
                     page_number=index + 1,
@@ -108,6 +100,35 @@ def render_pages(data: bytes, dpi: int | None = None) -> list[PageRender]:
     finally:
         document.close()
     return renders
+
+
+def _native_words(page) -> list[NativeWord]:
+    """Native words in DISPLAY space — the same frame as `page.rect` and the pixmap.
+
+    PyMuPDF reports text geometry in the page's UNROTATED space, while `page.rect` and
+    `get_pixmap()` are both post-rotation. On a `/Rotate 90` scan the two frames are
+    transposed, so normalising a raw word box against `page.rect` puts the highlight on
+    a different part of the page entirely (and can push a coordinate out of [0,1], where
+    clamping hides it). `page.rotation_matrix` is the map between the two frames; it is
+    the identity when the page is not rotated.
+    """
+    import pymupdf
+
+    matrix = page.rotation_matrix
+    out: list[NativeWord] = []
+    for w in page.get_text("words"):
+        if not str(w[4]).strip():
+            continue
+        box = pymupdf.Rect(w[0], w[1], w[2], w[3]) * matrix
+        box.normalize()
+        out.append(
+            NativeWord(
+                text=str(w[4]),
+                x1=float(box.x0), y1=float(box.y0), x2=float(box.x1), y2=float(box.y1),
+                block_no=int(w[5]), line_no=int(w[6]),
+            )
+        )
+    return out
 
 
 def group_words_into_lines(words: list[NativeWord]) -> list[tuple[str, tuple[float, float, float, float]]]:

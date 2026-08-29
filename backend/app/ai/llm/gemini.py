@@ -53,8 +53,7 @@ class GeminiProvider(LLMProvider, DocumentVisionProvider):
             meta = getattr(response, "usage_metadata", None) or {}
             self.usage.prompt_tokens += int(meta.get("input_tokens", 0))
             self.usage.completion_tokens += int(meta.get("output_tokens", 0))
-            text = response.content if isinstance(response.content, str) else str(response.content)
-            return _parse_json(text)
+            return _parse_json(_content_text(response.content))
         except Exception as exc:  # noqa: BLE001 - any provider failure degrades to fallback
             log.warning("gemini call failed", extra={"error": str(exc)})
             return None
@@ -86,6 +85,26 @@ class GeminiProvider(LLMProvider, DocumentVisionProvider):
             return None
         text = result.get("text")
         return text if isinstance(text, str) and text.strip() else None
+
+
+def _content_text(content: Any) -> str:
+    """Flatten a chat response body to plain text.
+
+    Current LangChain builds return a list of typed content blocks rather than a string,
+    and `str()` on that list yields a Python repr whose braces and quotes look enough
+    like JSON to fool a naive scan — the parse then fails, or worse, half-succeeds.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and isinstance(block.get("text"), str):
+                parts.append(block["text"])
+        return "\n".join(parts)
+    return str(content)
 
 
 def _parse_json(text: str) -> dict[str, Any] | None:

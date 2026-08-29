@@ -119,8 +119,8 @@ def _ocr_blocks(
     scale_x = render.width / render.image_width if render.image_width else 1.0
     scale_y = render.height / render.image_height if render.image_height else 1.0
 
-    blocks: list[IRBlock] = []
-    for index, word in enumerate(words):
+    placed: list[tuple[BBox, str, float]] = []
+    for word in words:
         original_px = preprocessed.chain.to_original((word.x1, word.y1, word.x2, word.y2))
         page_space = (
             original_px[0] * scale_x,
@@ -132,11 +132,14 @@ def _ocr_blocks(
         if bbox is None:
             log.debug("dropping degenerate OCR box", extra={"page": render.page_number})
             continue
-        confidence = max(0.0, min(1.0, float(word.confidence)))
+        placed.append((bbox, word.text, max(0.0, min(1.0, float(word.confidence)))))
+
+    blocks: list[IRBlock] = []
+    for index, (bbox, text, confidence) in enumerate(group_ocr_words_into_lines(placed)):
         blocks.append(
             IRBlock(
                 block_id=f"p{render.page_number}-o{index}",
-                text=word.text,
+                text=text,
                 bbox=bbox,
                 confidence=confidence,
                 block_type=BlockType.LINE,
@@ -146,6 +149,67 @@ def _ocr_blocks(
             )
         )
     return blocks
+
+
+# Two fragments belong to the same line when their vertical spans overlap by at least
+# this fraction of the shorter one.
+LINE_OVERLAP_RATIO = 0.45
+# A horizontal gap this wide (normalised) is a column break, not a word space: it keeps
+# a right-hand marks column, or the two halves of a comparison table, apart.
+COLUMN_GAP = 0.09
+
+
+def group_ocr_words_into_lines(
+    placed: list[tuple[BBox, str, float]],
+) -> list[tuple[BBox, str, float]]:
+    """Cluster detector fragments into text lines. Pure geometry — no model involved.
+
+    A detector emits word-sized boxes in its own order. Left as-is they defeat every
+    downstream stage that reasons about lines: reading order interleaves them, answer
+    segmentation sees a gap between every word, and the vision provider gets crops too
+    small to read. Grouping is deterministic and reversible — the union of the
+    fragments' boxes is still an OCR-derived coordinate (ADR-001).
+    """
+    if not placed:
+        return []
+
+    rows: list[list[tuple[BBox, str, float]]] = []
+    for item in sorted(placed, key=lambda entry: (entry[0].y1 + entry[0].y2) / 2):
+        bbox = item[0]
+        for row in rows:
+            top = min(b.y1 for b, _, _ in row)
+            bottom = max(b.y2 for b, _, _ in row)
+            overlap = min(bottom, bbox.y2) - max(top, bbox.y1)
+            shorter = min(bottom - top, bbox.y2 - bbox.y1)
+            if shorter > 0 and overlap / shorter >= LINE_OVERLAP_RATIO:
+                row.append(item)
+                break
+        else:
+            rows.append([item])
+
+    out: list[tuple[BBox, str, float]] = []
+    for row in rows:
+        run: list[tuple[BBox, str, float]] = []
+        for item in sorted(row, key=lambda entry: entry[0].x1):
+            if run and item[0].x1 - max(b.x2 for b, _, _ in run) > COLUMN_GAP:
+                out.append(_merge_run(run))
+                run = []
+            run.append(item)
+        if run:
+            out.append(_merge_run(run))
+    return sorted(out, key=lambda entry: (entry[0].y1, entry[0].x1))
+
+
+def _merge_run(run: list[tuple[BBox, str, float]]) -> tuple[BBox, str, float]:
+    text = " ".join(item[1].strip() for item in run if item[1].strip())
+    box = BBox(
+        x1=min(item[0].x1 for item in run),
+        y1=min(item[0].y1 for item in run),
+        x2=max(item[0].x2 for item in run),
+        y2=max(item[0].y2 for item in run),
+    )
+    # The line is only as trustworthy as its weakest fragment.
+    return box, text, round(min(item[2] for item in run), 4)
 
 
 def _assign_reading_order(blocks: list[IRBlock]) -> list[IRBlock]:
