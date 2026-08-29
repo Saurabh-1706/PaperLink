@@ -37,7 +37,6 @@ coverage/
 
 # Runtime storage / local sample inputs (not source)
 data/
-storage/
 
 # OS / editor
 .DS_Store
