@@ -17,8 +17,8 @@ LABEL_PARENT = 0.55
 @dataclass(frozen=True)
 class StageWeights:
     label: float = 0.55
-    spatial: float = 0.25
-    semantic: float = 0.20
+    spatial: float = 0.20  # U4 — reduced from 0.25 to give semantic more influence
+    semantic: float = 0.25  # U4 — raised from 0.20; vision-corrected text is cleaner
 
 
 DEFAULT_WEIGHTS = StageWeights()
@@ -35,6 +35,70 @@ def label_score(question: ExtractedQuestion, answer: ExtractedAnswer) -> float:
     if question.normalized_number.startswith(f"{answer.detected_label}."):
         return LABEL_PARENT
     if answer.detected_label.startswith(f"{question.normalized_number}."):
+        return LABEL_PARENT
+    return 0.0
+
+
+# U2 — Question-number offset resolver.
+# Detects the integer offset between answer-sheet numbering and question-paper numbering
+# from the first confident direct match, then applies it to all remaining label comparisons.
+def _extract_top_int(label: str) -> int | None:
+    """Return the leading integer from a normalised label, e.g. '18.a' -> 18."""
+    part = label.split(".")[0]
+    return int(part) if part.isdigit() else None
+
+
+def detect_label_offset(
+    questions: list[ExtractedQuestion],
+    answers: list[ExtractedAnswer],
+) -> int:
+    """Scan all (question, answer) pairs for exact label matches and derive the
+    most common integer offset between answer-sheet numbers and question numbers.
+    Returns 0 when no offset is detectable (i.e. numbering already matches).
+    """
+    offsets: dict[int, int] = {}
+    for answer in answers:
+        if not answer.detected_label:
+            continue
+        a_top = _extract_top_int(answer.detected_label)
+        if a_top is None:
+            continue
+        for question in questions:
+            q_top = _extract_top_int(question.normalized_number)
+            if q_top is None:
+                continue
+            if answer.detected_label == question.normalized_number:
+                # Already matches — offset is 0 for this pair.
+                offsets[0] = offsets.get(0, 0) + 1
+            elif a_top - q_top != 0:
+                # Candidate offset: answer number minus question number.
+                diff = a_top - q_top
+                offsets[diff] = offsets.get(diff, 0) + 1
+    if not offsets:
+        return 0
+    # Return the most frequently observed offset.
+    return max(offsets, key=lambda k: offsets[k])
+
+
+def label_score_with_offset(
+    question: ExtractedQuestion, answer: ExtractedAnswer, offset: int
+) -> float:
+    """label_score that also tries the offset-adjusted label before giving up."""
+    base = label_score(question, answer)
+    if base > 0.0 or offset == 0 or not answer.detected_label:
+        return base
+    a_top = _extract_top_int(answer.detected_label)
+    q_top = _extract_top_int(question.normalized_number)
+    if a_top is None or q_top is None:
+        return 0.0
+    if a_top - q_top != offset:
+        return 0.0
+    # Sub-part must also match when present.
+    a_parts = answer.detected_label.split(".")
+    q_parts = question.normalized_number.split(".")
+    if a_parts[1:] == q_parts[1:]:
+        return LABEL_EXACT
+    if not a_parts[1:] and q_parts[1:]:
         return LABEL_PARENT
     return 0.0
 

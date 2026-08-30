@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.modules.answer_pipeline.pipeline import merge_continuations
 from app.modules.mapping_engine import assignment, stages
+from app.modules.mapping_engine.stages import detect_label_offset, label_score_with_offset
 from app.schemas.common import MappingType, ReviewStatus
 from app.schemas.pipeline import (
     ExtractedAnswer,
@@ -59,13 +60,21 @@ def map_answers(
     question_rank = stages.build_ranks(stages.question_order(questions))
     answer_rank = stages.build_ranks(stages.answer_order(logical_answers))
 
+    # U2 — detect numbering offset once before building the matrix.
+    label_offset = detect_label_offset(questions, logical_answers)
+    if label_offset:
+        log.info("label offset detected", extra={"offset": label_offset})
+
     matrix: list[list[float]] = []
     detail: list[list[MappingEvidence]] = []
     for question in questions:
         row: list[float] = []
         row_detail: list[MappingEvidence] = []
         for answer in logical_answers:
-            label = stages.label_score(question, answer) if config.use_labels else 0.0
+            label = (
+                label_score_with_offset(question, answer, label_offset)
+                if config.use_labels else 0.0
+            )
             spatial = (
                 stages.spatial_score(question, answer, question_rank, answer_rank)
                 if config.use_spatial

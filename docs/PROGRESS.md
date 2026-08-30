@@ -23,6 +23,7 @@ Status values: `Not started` · `In progress` · `Done` · `Blocked` · `Cut`
 | 9 | API layer | Done | All routes async via Celery; job progress observable |
 | 10 | Frontend | Owned by the UI workstream | Question → answer → exact highlight works end to end |
 | 11 | Deployment | In progress | Reproducible build + seeded demo |
+| 12 | Accuracy & performance upgrades (U1–U7) | Done | Unmatched < 25; direct matches > 28/49; pipeline < 350s |
 
 **Sequencing rule.** Phases 2→6 are the graded core and are built and measured before
 any UI work. If time runs short, cut Phase 7 (grading depth) and Phase 11 (deployment
@@ -138,6 +139,18 @@ polish) — never Phase 8, which is the only thing that substantiates accuracy c
 - [ ] Migrations on release
 - [ ] Seeded demo org
 - [ ] README demo script
+
+## Phase 12 — Accuracy & performance upgrades
+
+See [11-upgrade-plan.md](11-upgrade-plan.md) for full evidence and acceptance criteria.
+
+- [x] U1 — Segmentation noise filter (`answer_pipeline/pipeline.py`)
+- [x] U2 — Question-number offset resolver (`mapping_engine/stages.py` + `engine.py`)
+- [x] U3 — Parallel vision validation (`answer_pipeline/vision.py`)
+- [x] U4 — Semantic weight rebalance (`mapping_engine/stages.py`)
+- [x] U5 — Provisional grading for `needs_review` mappings (`grading/engine.py`)
+- [x] U6 — Switch vision provider to Gemini (`.env`)
+- [x] U7 — Fix duplicate `ii` label normalisation (`question_pipeline/pipeline.py` + `labels.py`)
 
 ---
 

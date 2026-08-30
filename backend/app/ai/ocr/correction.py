@@ -99,7 +99,7 @@ def mask_domain_terms(text: str) -> tuple[str, dict[str, str]]:
 
         text = pattern.sub(_replacer, text)
         # Advance global index past any replacements made for this term
-        index = max((int(k.split("_")[2]) + 1) for k in restore) if restore else 0
+        index = max((int(k.split("_")[3]) + 1) for k in restore) if restore else 0
 
     return text, restore
 
