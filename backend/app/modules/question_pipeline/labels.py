@@ -99,6 +99,31 @@ def normalize_parts(top: str | None, sub: str | None, subsub: str | None) -> str
     return ".".join(parts)
 
 
+# U7 — deduplicate normalised labels within a parent scope.
+# When two sub-questions share the same label (e.g. two `ii)` under Q14.a), append
+# `.2`, `.3` etc. to the second and subsequent occurrences so they are matchable.
+def deduplicate_normalized_numbers(questions: list) -> list:
+    """Mutate-free: returns a new list with disambiguated normalized_number values.
+    Expects objects with .normalized_number and .parent_number attributes.
+    """
+    seen: dict[str, int] = {}
+    out = []
+    for question in questions:
+        key = question.normalized_number
+        count = seen.get(key, 0)
+        if count == 0:
+            seen[key] = 1
+            out.append(question)
+        else:
+            seen[key] = count + 1
+            new_num = f"{key}.{count + 1}"
+            out.append(question.model_copy(update={
+                "normalized_number": new_num,
+                "question_id": f"q-{new_num}",
+            }))
+    return out
+
+
 def normalize_label(text: str, allow_answer_prefix: bool = True) -> str | None:
     """Collapse any rendering of a label to its canonical form, or None."""
     parsed = parse_label(text, allow_answer_prefix=allow_answer_prefix)

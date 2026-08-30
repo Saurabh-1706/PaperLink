@@ -87,18 +87,22 @@ def main() -> None:
     report.notes.append(f"ocr_engine={get_ocr_engine().name} llm={provider.name if provider else 'none'}")
 
     # ---------------------------------------------------------------- question paper
+    print("[1/5] extracting questions ...", flush=True)
     started = time.perf_counter()
     question_bytes = Path(args.questions).read_bytes()
     validate_pdf(question_bytes)
     question_ir = extract_document(question_bytes, "qp", "question_paper", dpi=args.dpi)
     report.timings["extract_questions"] = time.perf_counter() - started
+    print(f"      done ({report.timings['extract_questions']:.1f}s)", flush=True)
 
     started = time.perf_counter()
     question_result = run_question_graph(question_ir.ir, provider=provider)
     report.timings["question_pipeline"] = time.perf_counter() - started
     report.questions = question_result.questions
+    print(f"      {len(report.questions)} questions extracted", flush=True)
 
     # ----------------------------------------------------------------- answer sheet
+    print("[2/5] extracting answer sheet (OCR, all pages) ...", flush=True)
     started = time.perf_counter()
     answer_bytes = Path(args.answers).read_bytes()
     validate_pdf(answer_bytes)
@@ -108,20 +112,26 @@ def main() -> None:
         answer_bytes, "as", "answer_sheet", dpi=args.dpi, handwriting=True
     )
     report.timings["extract_answers"] = time.perf_counter() - started
+    print(f"      done ({report.timings['extract_answers']:.1f}s, {len(answer_ir.artifacts)} pages)", flush=True)
 
+    print("[3/5] answer pipeline (segmentation + vision validation) ...", flush=True)
     page_images = {artifact.page_number: artifact.image_bytes for artifact in answer_ir.artifacts}
     started = time.perf_counter()
     answer_result = run_answer_graph(answer_ir.ir, provider=provider, page_images=page_images)
     report.timings["answer_pipeline"] = time.perf_counter() - started
     report.answers = answer_result.answers
+    print(f"      done ({report.timings['answer_pipeline']:.1f}s, {len(report.answers)} answers)", flush=True)
 
     # --------------------------------------------------------------------- mapping
+    print("[4/5] mapping ...", flush=True)
     started = time.perf_counter()
     mapping = run_mapping_graph(question_result.questions, answer_result.answers, provider=provider)
     report.timings["mapping"] = time.perf_counter() - started
     report.mapping = mapping
+    print(f"      done ({report.timings['mapping']:.1f}s)", flush=True)
 
     # --------------------------------------------------------------------- grading
+    print("[5/5] grading ...", flush=True)
     started = time.perf_counter()
     logical = {answer.answer_id: answer for answer in merge_continuations(answer_result.answers)}
     report.grades = grade_assessment(
@@ -131,6 +141,7 @@ def main() -> None:
         llm=provider,
     )
     report.timings["grading"] = time.perf_counter() - started
+    print(f"      done ({report.timings['grading']:.1f}s)", flush=True)
 
     _write_overlays(answer_ir, mapping, out_dir / "overlays")
     _print_report(report, question_result.ambiguities, answer_result.low_confidence_answer_ids)

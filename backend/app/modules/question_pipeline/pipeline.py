@@ -162,8 +162,13 @@ def _apply_hierarchy(questions: list[ExtractedQuestion]) -> list[ExtractedQuesti
                 stem_sub = parts[0]
         else:
             normalized = question.normalized_number
-        while normalized in known:  # duplicate labels must not collide silently
-            normalized = f"{normalized}'"
+        while normalized in known:  # U7 — use numeric suffix, not apostrophe
+            # Count existing suffixed variants to pick the next number.
+            base = normalized.rstrip("0123456789").rstrip(".")
+            suffix_num = 2
+            while f"{base}.{suffix_num}" in known:
+                suffix_num += 1
+            normalized = f"{base}.{suffix_num}"
         known.add(normalized)
         parent = parent_of(normalized)
         out.append(

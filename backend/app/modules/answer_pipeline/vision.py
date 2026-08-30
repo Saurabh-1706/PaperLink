@@ -12,6 +12,7 @@ Improvements over the baseline:
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import io
 
@@ -19,7 +20,7 @@ from app.ai.llm.base import DocumentVisionProvider
 from app.ai.ocr.correction import clean_artifacts, mask_domain_terms, restore_domain_terms
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.modules.answer_pipeline.pipeline import normalize_text
+from app.modules.answer_pipeline.pipeline import normalize_text, parse_answer_label
 from app.modules.extraction.ir import denormalize_bbox
 from app.schemas.common import Region
 from app.schemas.pipeline import ExtractedAnswer
@@ -123,43 +124,34 @@ def validate_transcriptions(
     used = False
     corrected_text: dict[str, str] = {}
 
-    for page, indices in by_page.items():
+    # U3 — run vision calls concurrently (one per page) instead of sequentially.
+    def _process_page(page_and_indices: tuple[int, list[int]]) -> dict[str, str]:
+        page, indices = page_and_indices
+        page_result: dict[str, str] = {}
         image = page_images.get(page)
         if image is None:
-            continue
-
-        # Compress if needed before any vision call.
+            return page_result
         image = _compress_for_vision(image, settings.groq_max_image_bytes)
-
         page_answers = [answers[i] for i in indices]
-
-        # Pre-clean OCR artifacts and collect per-line confidences.
         cleaned_lines = [clean_artifacts(a.raw_text) for a in page_answers]
         confidences = [a.confidence for a in page_answers]
-
-        # Mask domain terms so the LLM cannot "correct" them.
         masked_lines: list[str] = []
         restore_maps: list[dict[str, str]] = []
         for line in cleaned_lines:
             masked, restore_map = mask_domain_terms(line)
             masked_lines.append(masked)
             restore_maps.append(restore_map)
-
-        # Try page-level correction first (one call, full context).
         try:
             result = provider.transcribe_page(image, masked_lines, confidences)
         except Exception as exc:  # noqa: BLE001
             log.warning("transcribe_page failed", extra={"page": page, "error": str(exc)})
             result = None
-
         if result is not None:
-            used = True
             for answer, corrected, restore_map in zip(page_answers, result, restore_maps):
                 if corrected and corrected.strip():
                     restored = restore_domain_terms(corrected, restore_map)
-                    corrected_text[answer.answer_id] = normalize_text(restored)
+                    page_result[answer.answer_id] = normalize_text(restored)
         else:
-            # Fall back: per-crop transcribe for each answer on this page.
             for answer, cleaned, restore_map in zip(page_answers, cleaned_lines, restore_maps):
                 if not answer.regions:
                     continue
@@ -171,9 +163,18 @@ def validate_transcriptions(
                     log.warning("transcribe failed", extra={"answer_id": answer.answer_id, "error": str(exc)})
                     corrected = None
                 if corrected and corrected.strip():
-                    used = True
                     restored = restore_domain_terms(corrected, restore_map)
-                    corrected_text[answer.answer_id] = normalize_text(restored)
+                    page_result[answer.answer_id] = normalize_text(restored)
+        return page_result
+
+    max_workers = min(3, len(by_page))
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = [pool.submit(_process_page, item) for item in by_page.items()]
+        for future in futures:
+            page_result = future.result()
+            if page_result:
+                used = True
+                corrected_text.update(page_result)
 
     out: list[ExtractedAnswer] = []
     for answer in answers:
@@ -181,8 +182,23 @@ def validate_transcriptions(
         if new_text is None:
             out.append(answer)
         else:
-            out.append(answer.model_copy(update={
+            update: dict[str, object] = {
                 "normalized_text": new_text,
                 "confidence": max(answer.confidence, CONFIDENCE_AFTER_VALIDATION),
-            }))
+            }
+            # U9 — re-derive the label from the corrected text.
+            # Labels are parsed in `extract_answers`, from raw OCR, before this stage
+            # runs (answer_graph.py:17). The vision model routinely restores the exact
+            # characters the label parser needs: "lns10 5 (R) ard y" comes back as
+            # "5. (B) ii, iii and v". Nothing re-read it, so the recovered label was
+            # thrown away and the answer reached the mapping engine with
+            # detected_label=None — the strongest signal stages.py has (stages.py:30).
+            #
+            # Only ever upgrades: a corrected line that parses to no label leaves any
+            # existing one alone, so this cannot erase a label OCR got right.
+            relabelled = parse_answer_label(new_text)
+            if relabelled is not None:
+                update["detected_label"] = relabelled.normalized
+                update["detected_label_display"] = relabelled.display
+            out.append(answer.model_copy(update=update))
     return out, used

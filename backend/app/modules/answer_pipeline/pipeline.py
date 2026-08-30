@@ -28,6 +28,14 @@ BOTTOM_OF_PAGE = 0.88       # a segment reaching below this may continue on the 
 TOP_OF_PAGE = 0.18
 CONTINUATION_CUES = re.compile(r"\b(cont(?:d|inued)?\.?|p\.?t\.?o\.?)\b", re.IGNORECASE)
 
+# U1 — Noise filters applied before segmentation.
+# Lone digit/letter: page numbers, MCQ option markers.
+_NOISE_LONE = re.compile(r"^\s*[\dA-Za-z]\s*$")
+# Section headers: "SECTION-A", "SECTION - B", "SECTION D" etc.
+_NOISE_SECTION = re.compile(r"^\s*SECTION\s*[-–]?\s*[A-Z]\s*$", re.IGNORECASE)
+# MCQ option line: "1. (D) Some text" or "3. (A) ..." — printed, not handwritten.
+_NOISE_MCQ = re.compile(r"^\s*\d{1,2}\.\s*\([A-Da-d]\)\s+\S")
+
 
 # U8 — MCQ option letters are answers, not sub-part labels.
 # On an answer sheet "8 (B) ..." is the student's chosen option for Q8, not sub-part b
@@ -80,6 +88,21 @@ def parse_answer_label(text: str) -> ParsedLabel | None:
     return parsed
 
 
+def _is_noise_block(block: IRBlock) -> bool:
+    """Return True for blocks that are structural noise, not student answer content."""
+    text = block.text.strip()
+    if not text:
+        return True
+    if _NOISE_LONE.match(text):
+        return True
+    if _NOISE_SECTION.match(text):
+        return True
+    # Short low-confidence fragments (e.g. stray marks, partial words).
+    if len(text) < 4 and block.confidence < 0.6:
+        return True
+    return False
+
+
 @dataclass
 class _Segment:
     page: int
@@ -106,6 +129,8 @@ def extract_answers(document: IRDocument) -> AnswerPipelineResult:
 # ------------------------------------------------------------------ stage 2: segmentation
 def _segment_page(page_number: int, blocks: list[IRBlock]) -> list[_Segment]:
     """Four independent signals: explicit labels, vertical gaps, margin geometry, size."""
+    # U1 — drop noise before any segmentation logic sees the blocks.
+    blocks = [b for b in blocks if not _is_noise_block(b)]
     if not blocks:
         return []
 
