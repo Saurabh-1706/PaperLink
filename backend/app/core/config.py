@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     groq_api_key: str | None = None
     llm_model: str = "gemini-flash-latest"
+    # Empty means "reuse llm_model for vision too" -- set to run vision (handwriting
+    # transcription/correction) on a different Gemini model than the other LLM stages
+    # (mapping ambiguity, question-structure repair).
+    gemini_vision_model: str = ""
     # Groq deprecates model ids often; verify against GET /openai/v1/models.
     groq_model: str = "openai/gpt-oss-120b"
     # Must be multimodal. Empty disables Groq vision -> OCR text is used as-is.
@@ -50,6 +54,13 @@ class Settings(BaseSettings):
     # After a quota/rate-limit refusal, stop calling the provider for this long
     # (process-local). 0 disables the breaker.
     llm_quota_cooldown_seconds: int = 900
+    # Client-side pacing so a burst of calls (e.g. one vision-correction call per page
+    # on a multi-page answer sheet) never exceeds the provider's own free-tier rpm cap
+    # in the first place -- that cap trips a 429, which then trips the cooldown above
+    # and silently discards every remaining call in the job. 15 matches the observed
+    # free-tier limit for Gemini's flash-lite models; raise it if you're on a paid
+    # tier. 0 disables pacing (calls fire as fast as the code allows).
+    llm_requests_per_minute: int = 15
 
     ocr_engine: Literal["paddle", "rapid", "doctr", "stub"] = "paddle"
 
@@ -88,6 +99,9 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 50 * 1024 * 1024
     max_pages: int = 200
     searchable_coverage_threshold: float = 0.02
+    # Auto-crop + perspective-rectify a photographed page before OCR ever sees it
+    # (documents/rectify.py). Off has no effect on a native (searchable) PDF page.
+    auto_rectify_photos: bool = True
 
     jwt_secret: str = "change-me"
     jwt_algorithm: str = "HS256"

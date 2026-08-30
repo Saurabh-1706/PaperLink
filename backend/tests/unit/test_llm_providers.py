@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.ai.llm import breaker, factory
+from app.ai.llm import breaker, factory, rate_limit
 from app.ai.llm.gemini import GeminiProvider
 from app.ai.llm.groq import GroqProvider
 from app.ai.llm.parsing import content_text, parse_json
@@ -17,9 +17,11 @@ class _Boom(Exception):
 @pytest.fixture(autouse=True)
 def _clean():
     breaker.reset()
+    rate_limit.reset()
     factory.set_provider(None)
     yield
     breaker.reset()
+    rate_limit.reset()
     factory.set_provider(None)
 
 
@@ -88,6 +90,33 @@ def test_groq_vision_is_optional():
     """No vision model configured -> no call, and handwriting keeps its OCR text."""
     provider = GroqProvider(model="m", vision_model="", api_key="k")
     assert provider.transcribe(b"png", "ocr") is None
+
+
+def test_gemini_vision_can_use_a_different_model(monkeypatch):
+    """GEMINI_VISION_MODEL lets vision (handwriting transcription) run on a
+    different model than text calls (mapping ambiguity, question repair) without
+    the two stages needing separate providers."""
+    provider = GeminiProvider(model="text-model", vision_model="vision-model", api_key="k")
+    seen: list[str] = []
+
+    def _fake_lazy(model_name):
+        seen.append(model_name)
+        return None  # no client -> _invoke returns None before any network call
+
+    monkeypatch.setattr(provider, "_lazy", _fake_lazy)
+    provider.complete_json("p", {})
+    provider.transcribe(b"png", "ocr")
+    assert seen == ["text-model", "vision-model"]
+
+
+def test_gemini_vision_model_defaults_to_the_text_model(monkeypatch):
+    """Unlike Groq (where an empty vision model is a deliberate off switch), Gemini
+    vision must not silently go dark just because GEMINI_VISION_MODEL was never set."""
+    import app.ai.llm.gemini as gemini_module
+
+    monkeypatch.setattr(gemini_module.settings, "gemini_vision_model", "")
+    provider = GeminiProvider(model="text-model", api_key="k")
+    assert provider._vision_model_name == "text-model"
 
 
 def test_groq_rejects_oversized_crops(monkeypatch):

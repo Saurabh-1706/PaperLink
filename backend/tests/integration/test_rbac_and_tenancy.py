@@ -19,12 +19,12 @@ def org_a_assessment(client, tokens, question_pdf, answer_pdf) -> dict:
     ).json()["id"]
     question_doc = client.post(
         f"/api/v1/assessments/{assessment_id}/question-paper",
-        files={"file": ("q.pdf", question_pdf, "application/pdf")},
+        files={"files": ("q.pdf", question_pdf, "application/pdf")},
         headers=auth_header(token),
     ).json()
     client.post(
         f"/api/v1/assessments/{assessment_id}/answer-sheet",
-        files={"file": ("a.pdf", answer_pdf, "application/pdf")},
+        files={"files": ("a.pdf", answer_pdf, "application/pdf")},
         headers=auth_header(token),
     )
     job = client.post(
@@ -70,7 +70,7 @@ def test_every_route_returns_404_for_another_org(client, tokens, org_a_assessmen
 
     upload = client.post(
         f"/api/v1/assessments/{assessment_id}/question-paper",
-        files={"file": ("q.pdf", question_pdf, "application/pdf")},
+        files={"files": ("q.pdf", question_pdf, "application/pdf")},
         headers=intruder,
     )
     assert upload.status_code == 404
@@ -95,7 +95,7 @@ def test_reviewer_cannot_upload_but_can_resolve_review(client, tokens, org_a_ass
 
     upload = client.post(
         f"/api/v1/assessments/{assessment_id}/question-paper",
-        files={"file": ("q.pdf", question_pdf, "application/pdf")},
+        files={"files": ("q.pdf", question_pdf, "application/pdf")},
         headers=reviewer,
     )
     assert upload.status_code == 403

@@ -15,7 +15,7 @@ def _create_assessment(client, token: str) -> str:
 def _upload(client, token: str, assessment_id: str, route: str, data: bytes) -> dict:
     response = client.post(
         f"/api/v1/assessments/{assessment_id}/{route}",
-        files={"file": ("doc.pdf", data, "application/pdf")},
+        files={"files": ("doc.pdf", data, "application/pdf")},
         headers=auth_header(token),
     )
     assert response.status_code == 202, response.text
@@ -202,7 +202,7 @@ def test_upload_rejects_a_non_pdf(client, tokens):
     assessment_id = _create_assessment(client, token)
     response = client.post(
         f"/api/v1/assessments/{assessment_id}/question-paper",
-        files={"file": ("evil.pdf", b"MZ not a pdf", "application/pdf")},
+        files={"files": ("evil.pdf", b"MZ not a pdf", "application/pdf")},
         headers=auth_header(token),
     )
     assert response.status_code == 415

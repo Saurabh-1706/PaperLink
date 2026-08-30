@@ -9,7 +9,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from app.core.config import settings
+from app.core.logging import get_logger
+from app.modules.documents.rectify import auto_rectify
 from app.schemas.common import PageClassification
+
+log = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -34,6 +38,30 @@ class PageRender:
     image_height: int
     classification: PageClassification
     native_words: list[NativeWord] = field(default_factory=list)
+
+
+def images_to_pdf(images: list[bytes]) -> bytes:
+    """Wrap one or more raw image files (JPEG/PNG) into a single PDF, one page per
+    image in the given order, each page sized to that image's own pixel dimensions.
+
+    Lets a photographed question paper or answer sheet -- one photo per page, the
+    normal shape of a student's upload -- enter the exact same downstream pipeline
+    (render_pages, auto_rectify, classification) as a real PDF; nothing below this
+    needs to know the source wasn't one. The page's absolute size in points is
+    otherwise meaningless here (render_pages re-rasterises at its own configured
+    DPI), so pixel count doubling as point count is fine -- only the aspect ratio,
+    which this preserves exactly, matters.
+    """
+    import pymupdf
+
+    document = pymupdf.open()
+    for image_bytes in images:
+        pixmap = pymupdf.Pixmap(image_bytes)
+        page = document.new_page(width=pixmap.width, height=pixmap.height)
+        page.insert_image(page.rect, stream=image_bytes)
+    data = document.tobytes()
+    document.close()
+    return data
 
 
 def _open(data: bytes):
@@ -84,15 +112,39 @@ def render_pages(data: bytes, dpi: int | None = None) -> list[PageRender]:
 
             pixmap = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
             words = _native_words(page)
+
+            image_bytes = pixmap.tobytes("png")
+            width, height = float(page.rect.width), float(page.rect.height)
+            image_width, image_height = pixmap.width, pixmap.height
+
+            # A native PDF page is already a perfect rectangle -- only a
+            # photographed page (no vector text layer) can need de-skewing this
+            # way. Silently keeps the original image when no confident page
+            # boundary is found: this step must never be required to succeed.
+            if settings.auto_rectify_photos and classification != PageClassification.SEARCHABLE:
+                rectified = auto_rectify(image_bytes)
+                if rectified is not None:
+                    log.info(
+                        "page auto-rectified",
+                        extra={"page": index + 1, "width": rectified.width, "height": rectified.height},
+                    )
+                    image_bytes = rectified.image_bytes
+                    image_width, image_height = rectified.width, rectified.height
+                    # No vector "points" concept applies to a photo: the rectified
+                    # image's own pixel grid becomes the page frame every bbox is
+                    # normalised against (extraction/ir.py), so width/height just
+                    # track it 1:1 rather than the PDF's arbitrary page-rect size.
+                    width, height = float(image_width), float(image_height)
+
             renders.append(
                 PageRender(
                     page_number=index + 1,
-                    width=float(page.rect.width),
-                    height=float(page.rect.height),
+                    width=width,
+                    height=height,
                     dpi=int(round(72.0 * zoom)),
-                    image_bytes=pixmap.tobytes("png"),
-                    image_width=pixmap.width,
-                    image_height=pixmap.height,
+                    image_bytes=image_bytes,
+                    image_width=image_width,
+                    image_height=image_height,
                     classification=classification,
                     native_words=words,
                 )

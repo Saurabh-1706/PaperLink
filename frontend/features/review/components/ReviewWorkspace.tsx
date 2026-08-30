@@ -35,7 +35,7 @@ export default function ReviewWorkspace({
   onEditAnswerText: (questionId: string, newText: string) => void;
   onEditFeedback: (questionId: string, newFeedback: string) => void;
 }) {
-  const { search, setSearch, filter, setFilter, byQuestion, filtered, unansweredQuestions } =
+  const { search, setSearch, filter, setFilter, byQuestion, filtered, filteredTree, unansweredQuestions } =
     useQuestionFilters(questions, mappings);
 
   // Ref to the scrollable question list — used to keep the selected card visible.

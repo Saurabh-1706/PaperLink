@@ -4,31 +4,31 @@ import clsx from "clsx";
 import UploadCard from "./UploadCard";
 
 export default function UploadStage({
-  questionFile,
-  answerFile,
+  questionFiles,
+  answerFiles,
   questionPageCount,
   answerPageCount,
-  onQuestionFile,
-  onAnswerFile,
+  onQuestionFiles,
+  onAnswerFiles,
   onClearQuestion,
   onClearAnswer,
   onStart,
   disabled,
   error,
 }: {
-  questionFile: File | null;
-  answerFile: File | null;
+  questionFiles: File[];
+  answerFiles: File[];
   questionPageCount?: number;
   answerPageCount?: number;
-  onQuestionFile: (f: File) => void;
-  onAnswerFile: (f: File) => void;
+  onQuestionFiles: (files: File[]) => void;
+  onAnswerFiles: (files: File[]) => void;
   onClearQuestion: () => void;
   onClearAnswer: () => void;
   onStart: () => void;
   disabled?: boolean;
   error?: string | null;
 }) {
-  const canStart = !!questionFile && !!answerFile && !disabled;
+  const canStart = questionFiles.length > 0 && answerFiles.length > 0 && !disabled;
 
   return (
     <div className="flex flex-col w-full h-full justify-center items-center">
@@ -43,27 +43,27 @@ export default function UploadStage({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12">
           <UploadCard
             label="Upload Question Paper"
-            description="Upload the original question paper (PDF or Images). Our AI will extract all questions and sub-parts automatically."
+            description="Upload the original question paper as a PDF, or select one photo per page. Our AI will extract all questions and sub-parts automatically."
             badgeText="AI Digitize"
             badgeIcon="auto_awesome"
             mainIcon="fact_check"
             theme="primary"
-            file={questionFile}
+            files={questionFiles}
             pageCount={questionPageCount}
-            onFile={onQuestionFile}
+            onFiles={onQuestionFiles}
             onClear={onClearQuestion}
             disabled={disabled}
           />
           <UploadCard
             label="Student Answer Sheet"
-            description="Upload the student's handwritten work. AI will map answers to questions and highlight specific regions."
+            description="Upload the student's handwritten work as a PDF, or select one photo per page. AI will map answers to questions and highlight specific regions."
             badgeText="Single Sheet"
             badgeIcon="person"
             mainIcon="file_copy"
             theme="secondary"
-            file={answerFile}
+            files={answerFiles}
             pageCount={answerPageCount}
-            onFile={onAnswerFile}
+            onFiles={onAnswerFiles}
             onClear={onClearAnswer}
             disabled={disabled}
           />

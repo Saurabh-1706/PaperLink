@@ -7,11 +7,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.modules.mapping_engine.similarity import semantic_score
-from app.modules.question_pipeline.labels import sort_key
+from app.modules.question_pipeline.labels import extract_top_int, sort_key
 from app.schemas.pipeline import ExtractedAnswer, ExtractedQuestion
 
 LABEL_EXACT = 1.0
 LABEL_PARENT = 0.55
+
+# Below this, a stage's score carries no real information (rather than "mild
+# disagreement") — see `combine()`.
+WEAK_SIGNAL = 0.05
 
 
 @dataclass(frozen=True)
@@ -42,20 +46,24 @@ def label_score(question: ExtractedQuestion, answer: ExtractedAnswer) -> float:
 # U2 — Question-number offset resolver.
 # Detects the integer offset between answer-sheet numbering and question-paper numbering
 # from the first confident direct match, then applies it to all remaining label comparisons.
-def _extract_top_int(label: str) -> int | None:
-    """Return the leading integer from a normalised label, e.g. '18.a' -> 18."""
-    part = label.split(".")[0]
-    return int(part) if part.isdigit() else None
+_extract_top_int = extract_top_int
 
 
 def detect_label_offset(
     questions: list[ExtractedQuestion],
     answers: list[ExtractedAnswer],
 ) -> int:
-    """Scan all (question, answer) pairs for exact label matches and derive the
-    most common integer offset between answer-sheet numbers and question numbers.
+    """Scan all (question, answer) pairs for label matches and derive the most common
+    integer offset between answer-sheet numbers and question numbers.
     Returns 0 when no offset is detectable (i.e. numbering already matches).
     """
+    # One vote per top-level question number, not one per row: a question with several
+    # sub-parts (11.a, 11.b, 11.c) must not get 3x the voting power of a question with
+    # none, or a heavily sub-divided paper skews the detected offset away from the
+    # true value.
+    unique_q_tops = sorted(
+        {top for q in questions if (top := _extract_top_int(q.normalized_number)) is not None}
+    )
     offsets: dict[int, int] = {}
     for answer in answers:
         if not answer.detected_label:
@@ -63,17 +71,9 @@ def detect_label_offset(
         a_top = _extract_top_int(answer.detected_label)
         if a_top is None:
             continue
-        for question in questions:
-            q_top = _extract_top_int(question.normalized_number)
-            if q_top is None:
-                continue
-            if answer.detected_label == question.normalized_number:
-                # Already matches — offset is 0 for this pair.
-                offsets[0] = offsets.get(0, 0) + 1
-            elif a_top - q_top != 0:
-                # Candidate offset: answer number minus question number.
-                diff = a_top - q_top
-                offsets[diff] = offsets.get(diff, 0) + 1
+        for q_top in unique_q_tops:
+            diff = a_top - q_top
+            offsets[diff] = offsets.get(diff, 0) + 1
     if not offsets:
         return 0
     # Return the most frequently observed offset.
@@ -135,9 +135,15 @@ def question_order(questions: list[ExtractedQuestion]) -> list[str]:
 
 
 def answer_order(answers: list[ExtractedAnswer]) -> list[str]:
-    def key(answer: ExtractedAnswer) -> tuple[int, float]:
+    def key(answer: ExtractedAnswer) -> tuple[float, float]:
         region = answer.regions[0] if answer.regions else None
-        return (answer.page_numbers[0] if answer.page_numbers else 0, region.bbox.y1 if region else 0.0)
+        # An answer with no page/bbox has no real position — defaulting it to (0, 0.0)
+        # would sort it ahead of every properly-positioned answer and shift every rank
+        # after it, corrupting the spatial signal for the whole page. Push it to the
+        # end instead, where it can't disturb anyone else's ordering.
+        page = answer.page_numbers[0] if answer.page_numbers else float("inf")
+        y = region.bbox.y1 if region else float("inf")
+        return (page, y)
 
     return [a.answer_id for a in sorted(answers, key=key)]
 
@@ -156,7 +162,16 @@ def combine(
     combined = weights.label * label + weights.spatial * spatial + weights.semantic * semantic
     # Without a label the two remaining signals must carry the full range on their own.
     if label == 0.0:
-        denominator = weights.spatial + weights.semantic
-        combined = (weights.spatial * spatial + weights.semantic * semantic) / denominator
-        combined *= 0.85  # unlabelled matches are never as certain as labelled ones
+        if spatial <= WEAK_SIGNAL and semantic > WEAK_SIGNAL:
+            # No usable positional evidence at all — an answer written out of the
+            # expected order (common when a student skips ahead or circles back) —
+            # so a strong text match must not be diluted by spatial's absent weight.
+            # A plain weighted average with spatial pinned at 0 caps out around 0.38-0.47
+            # even for a perfect semantic match, well below `review_threshold` (0.45):
+            # legitimate out-of-order answers were silently dropped as unanswered.
+            combined = semantic * 0.85
+        else:
+            denominator = weights.spatial + weights.semantic
+            combined = (weights.spatial * spatial + weights.semantic * semantic) / denominator
+            combined *= 0.85  # unlabelled matches are never as certain as labelled ones
     return round(min(0.99, max(0.0, combined)), 4)

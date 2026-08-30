@@ -3,6 +3,13 @@
 import { useRef, useState } from "react";
 import clsx from "clsx";
 
+/** Sorted by filename so a multi-photo selection (IMG_001.jpg, IMG_002.jpg, ...)
+ * lands in page order without depending on the browser's (unreliable) picker
+ * order or drag-drop order. */
+function sortFilesByName(files: FileList | File[]): File[] {
+  return Array.from(files).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+}
+
 export default function UploadCard({
   label,
   description,
@@ -10,9 +17,9 @@ export default function UploadCard({
   badgeIcon,
   mainIcon,
   theme = "primary",
-  file,
+  files,
   pageCount,
-  onFile,
+  onFiles,
   onClear,
   disabled,
 }: {
@@ -22,14 +29,16 @@ export default function UploadCard({
   badgeIcon: string;
   mainIcon: string;
   theme?: "primary" | "secondary";
-  file: File | null;
+  files: File[];
   pageCount?: number;
-  onFile: (file: File) => void;
+  onFiles: (files: File[]) => void;
   onClear: () => void;
   disabled?: boolean;
 }) {
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const file = files[0] ?? null;
+  const totalSizeMb = files.reduce((sum, f) => sum + f.size, 0) / (1024 * 1024);
 
   const themeClasses = {
     primary: {
@@ -68,18 +77,19 @@ export default function UploadCard({
       onDrop={(e) => {
         e.preventDefault();
         setDragOver(false);
-        const f = e.dataTransfer.files?.[0];
-        if (f) onFile(f);
+        if (e.dataTransfer.files?.length) onFiles(sortFilesByName(e.dataTransfer.files));
       }}
     >
       <input
         ref={inputRef}
         type="file"
         accept="application/pdf,image/*"
+        multiple
         className="hidden"
         onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) onFile(f);
+          if (e.target.files?.length) onFiles(sortFilesByName(e.target.files));
+          // Selecting the same file(s) again after Remove must still fire onChange.
+          e.target.value = "";
         }}
       />
       <div
@@ -103,14 +113,23 @@ export default function UploadCard({
         {file ? (
           <div className="flex flex-col items-center justify-center gap-4 py-4 w-full">
             <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-surface-container-high text-on-surface-variant">
-              <span className="material-symbols-outlined text-[32px]">description</span>
+              <span className="material-symbols-outlined text-[32px]">
+                {files.length > 1 ? "photo_library" : "description"}
+              </span>
             </div>
             <div className="text-center w-full max-w-[200px]">
-              <p className="truncate font-headline-md text-headline-md text-on-surface" title={file.name}>
-                {file.name}
-              </p>
+              {files.length > 1 ? (
+                <p className="font-headline-md text-headline-md text-on-surface">
+                  {files.length} photos selected
+                </p>
+              ) : (
+                <p className="truncate font-headline-md text-headline-md text-on-surface" title={file.name}>
+                  {file.name}
+                </p>
+              )}
               <p className="font-label-sm text-label-sm text-on-surface-variant/70 mt-1">
-                {(file.size / (1024 * 1024)).toFixed(1)}MB{pageCount ? ` · ${pageCount} pg` : ""}
+                {totalSizeMb.toFixed(1)}MB
+                {files.length > 1 ? ` · ${files.length} pages` : pageCount ? ` · ${pageCount} pg` : ""}
               </p>
             </div>
             {!disabled && (
@@ -121,7 +140,7 @@ export default function UploadCard({
                 }}
                 className="mt-2 text-error font-label-sm hover:underline"
               >
-                Remove File
+                {files.length > 1 ? "Remove Photos" : "Remove File"}
               </button>
             )}
           </div>

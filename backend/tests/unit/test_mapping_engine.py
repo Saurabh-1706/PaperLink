@@ -9,11 +9,14 @@ from app.schemas.common import MappingType, Region, ReviewStatus
 from app.schemas.pipeline import ExtractedAnswer, ExtractedQuestion
 
 
-def question(number: str, text: str, order: int = 0, optional: bool = False) -> ExtractedQuestion:
+def question(
+    number: str, text: str, order: int = 0, optional: bool = False, parent: str | None = None
+) -> ExtractedQuestion:
     return ExtractedQuestion(
         question_id=f"q-{number}",
         display_number=number,
         normalized_number=number,
+        parent_number=parent,
         text=text,
         pages=[1],
         regions=[Region(page=1, bbox=[0.1, 0.1, 0.9, 0.2])],
@@ -173,3 +176,76 @@ def test_llm_is_not_called_when_the_top_match_is_decisive():
     questions = [question("1", "Define velocity", 0)]
     answers = [answer("a1", "velocity is displacement over time", label="1")]
     map_answers(questions, answers, MappingConfig(), llm=ExplodingProvider())
+
+
+# --------------------------------------------------------- out-of-order unlabelled fix
+def test_unlabelled_out_of_order_match_is_not_diluted_below_the_review_floor():
+    """A strong semantic match with zero positional evidence (an answer written out of
+    the expected question order) must not be diluted below `review_threshold` just
+    because spatial contributed nothing to the weighted average. Previously the
+    renormalized blend capped a semantic-only match around 0.42-0.47, so even a
+    near-perfect text match on a reordered answer was silently left unanswered."""
+    combined = stages.combine(label=0.0, spatial=0.0, semantic=0.9)
+    assert combined >= MappingConfig().review_threshold
+
+    # A genuinely unrelated, unlabelled, out-of-order answer must still be rejected.
+    assert stages.combine(label=0.0, spatial=0.0, semantic=0.0) == 0.0
+
+    # Spatial alone (no semantic support) must still not be enough to force acceptance
+    # on its own — guards against over-correcting the fix in the other direction.
+    assert stages.combine(label=0.0, spatial=1.0, semantic=0.0) < MappingConfig().accept_threshold
+
+
+def test_offset_detection_is_not_skewed_by_heavily_sub_divided_questions():
+    """A question with several sub-parts must not get one offset vote per sub-part.
+    With 4 sub-parts under Q1 and none under Q2, the old vote-per-row scan let Q1's
+    sub-parts outvote the correct offset (0) with a wrong one (+1), even though every
+    answer on the sheet was numbered consistently with the question paper."""
+    questions = [
+        question("1.a", "part a", order=0, parent="1"),
+        question("1.b", "part b", order=1, parent="1"),
+        question("1.c", "part c", order=2, parent="1"),
+        question("1.d", "part d", order=3, parent="1"),
+        question("2", "second question", order=4),
+    ]
+    answers = [answer("a1", "text", label="1"), answer("a2", "text", label="2")]
+    assert stages.detect_label_offset(questions, answers) == 0
+
+
+def test_answer_order_pushes_positionless_answers_to_the_end():
+    """An answer with no page/region has no real position. Defaulting it to (0, 0.0)
+    used to sort it ahead of every properly-positioned answer, shifting every rank
+    after it and corrupting the spatial signal for the rest of the page."""
+    positioned_first = answer("a1", "first", y=0.1)
+    positioned_second = answer("a2", "second", y=0.4)
+    positionless = ExtractedAnswer(
+        answer_id="a3", raw_text="stray", normalized_text="stray", confidence=0.9
+    )
+    order = stages.answer_order([positioned_first, positionless, positioned_second])
+    assert order == ["a1", "a2", "a3"]
+
+
+# ------------------------------------------------------------- multi-part sibling sharing
+def test_multi_part_sibling_losing_the_shared_answer_is_flagged_not_left_blank():
+    """One answer labelled only with the parent number ("11") scores equally against
+    every sub-part 11.a / 11.b, but one-to-one assignment can only award it to one of
+    them. The sibling that loses the race is not truly blank — it should carry a note
+    pointing the reviewer at the answer it may share, and be flagged for review."""
+    q_a = question("11.a", "Define momentum", order=0, parent="11")
+    q_b = question("11.b", "State the SI unit of momentum", order=1, parent="11")
+    shared = answer("a1", "momentum is mass times velocity, measured in kg m per second", label="11")
+
+    result = map_answers([q_a, q_b], [shared])
+    by_question = {m.question_id: m for m in result.mappings}
+
+    winners = [m for m in by_question.values() if m.answer_id == "a1"]
+    losers = [m for m in by_question.values() if m.answer_id is None]
+    assert len(winners) == 1
+    assert len(losers) == 1
+
+    loser = losers[0]
+    assert loser.review_status == ReviewStatus.NEEDS_REVIEW
+    assert loser.regions == []
+    assert "shared answer" in loser.evidence.notes[0]
+    winner_question = q_a if winners[0].question_id == q_a.question_id else q_b
+    assert winner_question.display_number in loser.evidence.notes[0]

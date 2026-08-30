@@ -35,7 +35,9 @@ class ValidationFailedError(AppError):
 
 
 class UnsupportedFileError(AppError):
-    code, status_code, message = "UNSUPPORTED_FILE", 415, "Only PDF uploads are supported."
+    code, status_code, message = (
+        "UNSUPPORTED_FILE", 415, "Only PDF or JPEG/PNG image uploads are supported.",
+    )
 
 
 class EncryptedPdfError(AppError):

@@ -204,21 +204,43 @@ def _finalize(
             )
         )
 
+    # Row -> the question that won each matched column, so a losing sibling can be told
+    # who its answer went to instead of just looking blank.
+    column_winner = {column: questions[row] for row, column in pairs}
+
     for row, question in enumerate(questions):
         if row in matched_rows:
             continue
+        notes = ["no answer assigned"]
+        review_status = ReviewStatus.AUTO_ACCEPTED if question.optional else ReviewStatus.NEEDS_REVIEW
+        if question.parent_number:
+            # A single answer labelled with just the parent number (e.g. "11") scores
+            # equally against every sub-part 11.a/11.b/11.c, but the one-to-one
+            # assignment can only give it to one of them. The siblings that lost the
+            # race are not truly blank — flag them for manual review instead of
+            # reporting a plain "no answer assigned" that looks like nothing was written.
+            for column in matched_columns:
+                if matrix[row][column] < config.review_threshold:
+                    continue
+                winner = column_winner[column]
+                if winner.parent_number == question.parent_number:
+                    notes = [
+                        f"possible shared answer: question {winner.display_number} was "
+                        "assigned an answer that also scored a plausible match here — "
+                        "the student may have answered this whole multi-part question in "
+                        "one block; review manually"
+                    ]
+                    review_status = ReviewStatus.NEEDS_REVIEW
+                    break
         mappings.append(
             Mapping(
                 question_id=question.question_id,
                 answer_id=None,
                 mapping_type=MappingType.UNANSWERED,
                 confidence=0.0,
-                # An optional question left blank is an expected outcome, not a doubt.
-                review_status=(
-                    ReviewStatus.AUTO_ACCEPTED if question.optional else ReviewStatus.NEEDS_REVIEW
-                ),
+                review_status=review_status,
                 regions=[],
-                evidence=MappingEvidence(stage="unanswered", notes=["no answer assigned"]),
+                evidence=MappingEvidence(stage="unanswered", notes=notes),
             )
         )
 

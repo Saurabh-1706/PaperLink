@@ -20,6 +20,7 @@ redis>=5.1
 # Documents / extraction
 pymupdf>=1.24
 pillow>=10.4
+opencv-python-headless>=4.10  # photographed-page auto-crop/perspective-rectify (documents/rectify.py)
 
 # OCR (imported lazily; selected by OCR_ENGINE env var — ADR-004).
 # paddle* is excluded: it conflicts with onnxruntime on Python 3.12 and is not

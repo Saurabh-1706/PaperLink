@@ -14,6 +14,8 @@ from app.core.errors import (
 )
 
 PDF_MAGIC = b"%PDF-"
+JPEG_MAGIC = b"\xff\xd8\xff"
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
 @dataclass(frozen=True)
@@ -26,6 +28,44 @@ class ValidatedUpload:
 
 def compute_checksum(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _looks_like_image(data: bytes) -> bool:
+    return data.startswith(JPEG_MAGIC) or data.startswith(PNG_MAGIC)
+
+
+def normalize_upload_to_pdf(uploads: list[tuple[str, bytes]]) -> tuple[bytes, str]:
+    """Accept exactly what `validate_pdf` always has (one PDF), or one-or-more JPEG/PNG
+    images -- one per page, in the given order -- and return `(pdf_bytes, mime)` ready
+    for it. A photographed answer sheet is normally several separate photos rather
+    than one PDF; this lets the upload endpoint accept that directly, with no change
+    to validation, storage, or extraction, none of which ever see anything but a
+    single PDF blob either way.
+
+    A mixed batch (a PDF alongside images, or anything that isn't a PDF/JPEG/PNG) is
+    rejected outright rather than guessed at.
+    """
+    if not uploads:
+        raise UnsupportedFileError("No file was uploaded.")
+    if len(uploads) == 1 and uploads[0][1].startswith(PDF_MAGIC):
+        return uploads[0][1], "application/pdf"
+
+    images: list[bytes] = []
+    for filename, data in uploads:
+        if not _looks_like_image(data):
+            raise UnsupportedFileError(
+                "Upload a single PDF, or one or more JPEG/PNG images (one per page).",
+                filename=filename,
+            )
+        images.append(data)
+
+    from app.modules.documents.pdf import images_to_pdf
+
+    try:
+        pdf_bytes = images_to_pdf(images)
+    except Exception as exc:  # noqa: BLE001 - any decode failure is a corrupt upload
+        raise CorruptDocumentError(str(exc)) from exc
+    return pdf_bytes, "application/pdf"
 
 
 def validate_pdf(data: bytes, declared_mime: str | None = None) -> ValidatedUpload:

@@ -13,8 +13,8 @@ import { useAssessment } from "../store/AssessmentProvider";
  */
 export default function AssessmentWorkflow() {
   const {
-    questionFile,
-    answerFile,
+    questionFiles,
+    answerFiles,
     questionPages,
     answerPages,
     stage,
@@ -26,8 +26,8 @@ export default function AssessmentWorkflow() {
     summary,
     isProcessing,
     isComplete,
-    setQuestionFile,
-    setAnswerFile,
+    setQuestionFiles,
+    setAnswerFiles,
     clearQuestionFile,
     clearAnswerFile,
     process,
@@ -62,12 +62,12 @@ export default function AssessmentWorkflow() {
             <ExtractingStage stage={stage} />
           ) : (
             <UploadStage
-              questionFile={questionFile}
-              answerFile={answerFile}
+              questionFiles={questionFiles}
+              answerFiles={answerFiles}
               questionPageCount={questionPages.length || undefined}
               answerPageCount={answerPages.length || undefined}
-              onQuestionFile={setQuestionFile}
-              onAnswerFile={setAnswerFile}
+              onQuestionFiles={setQuestionFiles}
+              onAnswerFiles={setAnswerFiles}
               onClearQuestion={clearQuestionFile}
               onClearAnswer={clearAnswerFile}
               onStart={process}

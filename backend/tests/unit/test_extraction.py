@@ -85,6 +85,61 @@ def test_ocr_path_returns_coordinates_in_original_page_space(question_pdf: bytes
     assert bbox.y1 == pytest.approx(0.1, abs=0.05)
 
 
+def _skewed_photo_pdf() -> bytes:
+    """A PDF whose only page is a perspective-warped photo of a page -- what a
+    student's phone photo, wrapped into a PDF with no scanning app involved, looks
+    like: no text layer, and the "paper" sits at an angle against a background."""
+    cv2 = pytest.importorskip("cv2")
+    import numpy as np
+    import pymupdf
+
+    canvas = np.zeros((600, 800, 3), dtype=np.uint8)
+    page_img = np.ones((400, 300, 3), dtype=np.uint8) * 255
+    src = np.array([[0, 0], [299, 0], [299, 399], [0, 399]], dtype=np.float32)
+    dst = np.array([[150, 80], [650, 40], [600, 520], [100, 560]], dtype=np.float32)
+    matrix = cv2.getPerspectiveTransform(src, dst)
+    warped = cv2.warpPerspective(page_img, matrix, (800, 600))
+    mask = cv2.warpPerspective(np.ones((400, 300), dtype=np.uint8) * 255, matrix, (800, 600))
+    canvas[mask > 0] = warped[mask > 0]
+    ok, buf = cv2.imencode(".png", canvas)
+
+    document = pymupdf.open()
+    page = document.new_page(width=800, height=600)
+    page.insert_image(page.rect, stream=buf.tobytes())
+    data = document.tobytes()
+    document.close()
+    return data
+
+
+def test_render_pages_auto_rectifies_a_photographed_page():
+    """A photographed (non-searchable) page must come out of render_pages already
+    flattened -- the coordinate contract downstream assumes a flat rectangular page,
+    and there is no scanning app in the loop to guarantee that on its own."""
+    from app.core.config import settings
+
+    data = _skewed_photo_pdf()
+    original = settings.auto_rectify_photos
+    try:
+        settings.auto_rectify_photos = False
+        without = render_pages(data)[0]
+        settings.auto_rectify_photos = True
+        with_rectify = render_pages(data)[0]
+    finally:
+        settings.auto_rectify_photos = original
+
+    assert without.classification != PageClassification.SEARCHABLE
+    # Rectification crops to just the detected page region, so the pixel grid
+    # differs from the raw, unrectified photo frame.
+    assert (with_rectify.image_width, with_rectify.image_height) != (
+        without.image_width,
+        without.image_height,
+    )
+    # width/height stay in lockstep with the corrected pixel grid -- there is no
+    # vector "points" concept for a photographed page.
+    assert with_rectify.width == with_rectify.image_width
+    assert with_rectify.height == with_rectify.image_height
+
+
 def test_low_confidence_blocks_are_flagged_not_dropped(question_pdf: bytes):
     render = render_pages(question_pdf)[0]
     engine = StubOCREngine()

@@ -32,11 +32,11 @@ export const assessmentApi = {
    * Re-uploading an identical file returns the existing document with
    * `created: false` rather than re-running OCR.
    */
-  uploadQuestionPaper: (assessmentId: string, file: File, signal?: AbortSignal) =>
-    upload(v1.questionPaper(assessmentId), file, signal),
+  uploadQuestionPaper: (assessmentId: string, files: File[], signal?: AbortSignal) =>
+    upload(v1.questionPaper(assessmentId), files, signal),
 
-  uploadAnswerSheet: (assessmentId: string, file: File, signal?: AbortSignal) =>
-    upload(v1.answerSheet(assessmentId), file, signal),
+  uploadAnswerSheet: (assessmentId: string, files: File[], signal?: AbortSignal) =>
+    upload(v1.answerSheet(assessmentId), files, signal),
 
   /** Enqueues the run and returns the job to poll. */
   process: (assessmentId: string, signal?: AbortSignal) =>
@@ -69,8 +69,10 @@ export const assessmentApi = {
     http.patch<MappingDto>(proxied(v1.mapping(mappingId)), patch, { signal }),
 };
 
-function upload(path: string, file: File, signal?: AbortSignal) {
+/** A single PDF, or one-or-more photos (one per page) -- either way every file
+ * goes under the same "files" field, matching the backend's list[UploadFile]. */
+function upload(path: string, files: File[], signal?: AbortSignal) {
   const form = new FormData();
-  form.append("file", file, file.name);
+  for (const file of files) form.append("files", file, file.name);
   return http.post<DocumentDto>(proxied(path), form, { signal });
 }

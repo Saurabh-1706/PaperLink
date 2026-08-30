@@ -155,3 +155,9 @@ def roman_to_int(value: str) -> int:
 def parent_of(normalized: str) -> str | None:
     parts = normalized.split(".")
     return ".".join(parts[:-1]) if len(parts) > 1 else None
+
+
+def extract_top_int(normalized: str) -> int | None:
+    """Return the leading integer from a normalised label, e.g. '18.a' -> 18."""
+    part = normalized.split(".")[0]
+    return int(part) if part.isdigit() else None

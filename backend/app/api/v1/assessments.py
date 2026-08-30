@@ -21,6 +21,7 @@ from app.db.repositories import (
 )
 from app.modules.assessments.service import AssessmentService
 from app.modules.documents.service import DocumentService
+from app.modules.documents.validation import normalize_upload_to_pdf
 from app.schemas.api import (
     AnswerOut,
     AssessmentOut,
@@ -71,9 +72,9 @@ def upload_question_paper(
     principal: UploadDep,
     session: SessionDep,
     storage: StorageDep,
-    file: Annotated[UploadFile, File()],
+    files: Annotated[list[UploadFile], File()],
 ) -> DocumentOut:
-    return _upload(assessment_id, principal, session, storage, file, DocumentKind.QUESTION_PAPER)
+    return _upload(assessment_id, principal, session, storage, files, DocumentKind.QUESTION_PAPER)
 
 
 @router.post("/{assessment_id}/answer-sheet", status_code=status.HTTP_202_ACCEPTED)
@@ -82,9 +83,9 @@ def upload_answer_sheet(
     principal: UploadDep,
     session: SessionDep,
     storage: StorageDep,
-    file: Annotated[UploadFile, File()],
+    files: Annotated[list[UploadFile], File()],
 ) -> DocumentOut:
-    return _upload(assessment_id, principal, session, storage, file, DocumentKind.ANSWER_SHEET)
+    return _upload(assessment_id, principal, session, storage, files, DocumentKind.ANSWER_SHEET)
 
 
 def _upload(
@@ -92,11 +93,15 @@ def _upload(
     principal: Principal,
     session,
     storage,
-    file: UploadFile,
+    files: list[UploadFile],
     kind: DocumentKind,
 ) -> DocumentOut:
     assessment = AssessmentRepository(session).get_or_404(principal.organization_id, assessment_id)
-    data = file.file.read()
+    # A single PDF, or one-or-more JPEG/PNG photos (one per page) -- either way this
+    # always comes out as one PDF blob, so nothing past this line needs to know which
+    # the upload actually was.
+    uploads = [(f.filename or "", f.file.read()) for f in files]
+    data, declared_mime = normalize_upload_to_pdf(uploads)
     service = DocumentService(session, storage)
     result = service.ingest(
         organization_id=principal.organization_id,
@@ -104,7 +109,7 @@ def _upload(
         kind=kind,
         data=data,
         created_by=principal.user_id,
-        declared_mime=file.content_type,
+        declared_mime=declared_mime,
     )
     AssessmentService(session, storage).attach_document(assessment, kind, result.document.id)
     session.commit()

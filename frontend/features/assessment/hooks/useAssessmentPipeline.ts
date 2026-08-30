@@ -37,8 +37,11 @@ function titleFromFile(file: File): string {
 }
 
 export function useAssessmentPipeline() {
-  const [questionFile, setQuestionFile] = useState<File | null>(null);
-  const [answerFile, setAnswerFile] = useState<File | null>(null);
+  // One PDF, or one-or-more photos (one per page) selected in filename order —
+  // see UploadCard's sortFilesByName. Either way this is what gets uploaded as
+  // the question paper / answer sheet.
+  const [questionFiles, setQuestionFiles] = useState<File[]>([]);
+  const [answerFiles, setAnswerFiles] = useState<File[]>([]);
   const [questionPages, setQuestionPages] = useState<PageImage[]>([]);
   const [answerPages, setAnswerPages] = useState<PageImage[]>([]);
 
@@ -114,7 +117,7 @@ export function useAssessmentPipeline() {
   }, []);
 
   const process = useCallback(async () => {
-    if (!questionFile || !answerFile) return;
+    if (!questionFiles.length || !answerFiles.length) return;
 
     runRef.current?.abort();
     const controller = new AbortController();
@@ -126,19 +129,19 @@ export function useAssessmentPipeline() {
     setStage("rendering-pages");
 
     try {
-      const assessment = await assessmentApi.create(titleFromFile(questionFile), signal);
+      const assessment = await assessmentApi.create(titleFromFile(questionFiles[0]), signal);
       setAssessmentId(assessment.id);
 
       // Sequential, not parallel: each upload renders and OCRs its document
       // inline, and two of those at once only lengthens the slower one.
       const questionDoc = await assessmentApi.uploadQuestionPaper(
         assessment.id,
-        questionFile,
+        questionFiles,
         signal
       );
       setQuestionPages(toPageImages(questionDoc.document_id, questionDoc.page_count));
 
-      const answerDoc = await assessmentApi.uploadAnswerSheet(assessment.id, answerFile, signal);
+      const answerDoc = await assessmentApi.uploadAnswerSheet(assessment.id, answerFiles, signal);
       setAnswerPages(toPageImages(answerDoc.document_id, answerDoc.page_count));
 
       const job = await pollJob(assessment.id, await assessmentApi.process(assessment.id, signal), signal);
@@ -158,13 +161,13 @@ export function useAssessmentPipeline() {
       setError(errorMessage(err));
       setStage("error");
     }
-  }, [questionFile, answerFile, pollJob, load]);
+  }, [questionFiles, answerFiles, pollJob, load]);
 
   const reset = useCallback(() => {
     runRef.current?.abort();
     runRef.current = null;
-    setQuestionFile(null);
-    setAnswerFile(null);
+    setQuestionFiles([]);
+    setAnswerFiles([]);
     setQuestionPages([]);
     setAnswerPages([]);
     setAssessmentId(null);
@@ -226,8 +229,8 @@ export function useAssessmentPipeline() {
   }, []);
 
   return {
-    questionFile,
-    answerFile,
+    questionFiles,
+    answerFiles,
     questionPages,
     answerPages,
     assessmentId,
@@ -240,10 +243,10 @@ export function useAssessmentPipeline() {
     summary,
     isProcessing: stage !== "idle" && stage !== "done" && stage !== "error",
     isComplete: stage === "done",
-    setQuestionFile,
-    setAnswerFile,
-    clearQuestionFile: useCallback(() => setQuestionFile(null), []),
-    clearAnswerFile: useCallback(() => setAnswerFile(null), []),
+    setQuestionFiles,
+    setAnswerFiles,
+    clearQuestionFile: useCallback(() => setQuestionFiles([]), []),
+    clearAnswerFile: useCallback(() => setAnswerFiles([]), []),
     process,
     reset,
     overrideScore,

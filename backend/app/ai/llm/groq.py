@@ -18,7 +18,7 @@ import base64
 import json
 from typing import Any
 
-from app.ai.llm import breaker
+from app.ai.llm import breaker, rate_limit
 from app.ai.llm.base import DocumentVisionProvider, LLMProvider
 from app.ai.llm.parsing import content_text, parse_json
 from app.core.config import settings
@@ -73,6 +73,10 @@ class GroqProvider(LLMProvider, DocumentVisionProvider):
         if breaker.is_open(self.name):
             self.usage.detail.append("skipped: quota cooldown")
             return None
+        # Pace calls so a burst never exceeds the free tier's own rpm cap in the first
+        # place -- that cap is what trips the breaker above and discards every later
+        # call in the job (see gemini.py's `_invoke` for the full story).
+        rate_limit.acquire(self.name, settings.llm_requests_per_minute)
         client = self._lazy(model_name, json_mode)
         if client is None:
             return None
