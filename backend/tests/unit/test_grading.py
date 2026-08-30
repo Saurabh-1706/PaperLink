@@ -131,6 +131,30 @@ def test_unmatched_answer_is_not_graded():
     assert grade_mapping(mapping, {}, {"a-1": _answer()}) is None
 
 
+def test_scores_are_whole_numbers_not_decimals():
+    """Partial credit naturally lands on a fraction (2.5 + 1.25 = 3.75 marks out of 5
+    here) -- the reported score must round that to a whole number, not show the
+    teacher "3.75 / 5"."""
+    rubric = Rubric(
+        criteria=[
+            RubricCriterion(name="states the law", weight=1, keywords=["force", "mass"]),
+            RubricCriterion(name="gives an example", weight=1, keywords=["trolley", "example"]),
+        ]
+    )
+    grade = grade_mapping(
+        _mapping(ReviewStatus.AUTO_ACCEPTED),
+        {"q-1": _question(marks=5.0)},
+        {"a-1": _answer("force equals mass times acceleration")},  # matches only 1st criterion
+        rubric,
+    )
+    assert grade.score == int(grade.score)
+
+    summary = assessment_summary([grade])
+    assert summary["total_score"] == int(summary["total_score"])
+    assert summary["max_score"] == int(summary["max_score"])
+    assert summary["percentage"] == int(summary["percentage"])
+
+
 def test_summary_separates_graded_from_held():
     graded = grade_mapping(
         _mapping(ReviewStatus.AUTO_ACCEPTED), {"q-1": _question()}, {"a-1": _answer()}

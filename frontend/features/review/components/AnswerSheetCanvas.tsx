@@ -179,15 +179,6 @@ export default function AnswerSheetCanvas({
           </div>
         );
       })()}
-
-      {/* ── Mini Map (Bottom Right) ─────────────────────────────────── */}
-      <div className="absolute bottom-4 right-4 w-32 h-48 bg-white/90 backdrop-blur-md rounded-xl shadow-lg border border-outline-variant/30 overflow-hidden pointer-events-none z-20">
-        <div 
-          className="w-full h-full bg-cover bg-center opacity-50" 
-          style={{ backgroundImage: `url('${pages[0]?.dataUrl}')` }}
-        ></div>
-        <div className="absolute top-0 left-0 w-full h-[60%] border-2 border-primary bg-primary/10 rounded-sm"></div>
-      </div>
     </div>
   );
 }

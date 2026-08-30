@@ -129,7 +129,7 @@ def _keyword_grade(
     return Grade(
         question_id=question.question_id,
         answer_id=answer.answer_id,
-        score=round(min(score, max_marks), 2),
+        score=round(min(score, max_marks)),
         max_score=max_marks,
         breakdown=breakdown,
         method="deterministic",
@@ -166,7 +166,7 @@ def _llm_grade(
     return Grade(
         question_id=question.question_id,
         answer_id=answer.answer_id,
-        score=round(max(0.0, min(score, max_marks)), 2),
+        score=round(max(0.0, min(score, max_marks))),
         max_score=max_marks,
         breakdown=breakdown,
         method="llm",
@@ -179,7 +179,7 @@ def _fallback_grade(question: ExtractedQuestion, answer: ExtractedAnswer, max_ma
     question_tokens = set(tokenize(question.text))
     answer_tokens = set(tokenize(answer.normalized_text))
     coverage = len(question_tokens & answer_tokens) / len(question_tokens) if question_tokens else 0.0
-    score = round(max_marks * min(1.0, coverage * 1.5), 2)
+    score = round(max_marks * min(1.0, coverage * 1.5))
     return Grade(
         question_id=question.question_id,
         answer_id=answer.answer_id,
@@ -228,8 +228,8 @@ def assessment_summary(grades: list[Grade]) -> dict[str, float | int]:
         "graded_count": len(scored),
         "held_for_review": len(grades) - len(scored),
         "provisional_count": len(provisional),
-        "provisional_score": round(sum(grade.score for grade in provisional), 2),
-        "total_score": round(total, 2),
-        "max_score": round(possible, 2),
-        "percentage": round(100 * total / possible, 2) if possible else 0.0,
+        "provisional_score": round(sum(grade.score for grade in provisional)),
+        "total_score": round(total),
+        "max_score": round(possible),
+        "percentage": round(100 * total / possible) if possible else 0.0,
     }
