@@ -1,0 +1,46 @@
+# GPU overlay. Applied on top of docker-compose.yml:
+#
+#     ./vedaai.sh up --gpu
+#     docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+#
+# Swaps the worker for a CUDA image and turns on the handwriting recogniser. Nothing
+# else in the stack changes — the API, frontend and redis are identical, because
+# recognition is the only stage that touches a device.
+#
+# Requires the NVIDIA Container Toolkit on the host:
+#     docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
+# If that fails, this overlay will start but the worker will refuse to load the model
+# and say so (ProviderUnavailableError naming TROCR_DEVICE), rather than silently
+# decoding on CPU at ~7 s/line.
+services:
+  worker:
+    build:
+      context: ./backend
+      dockerfile: docker/Dockerfile.worker.gpu
+    environment:
+      # Routing on: classify each line, send handwritten low-confidence ones to TrOCR.
+      - LINE_SCRIPT_MODE=route
+      - LINE_RECOGNIZER=trocr
+      - TROCR_DEVICE=cuda
+      # base, not small: measured CER 0.204 vs 0.274 on the reference page. The only
+      # reason to prefer small is CPU decode cost, which does not apply here.
+      - TROCR_MODEL=microsoft/trocr-base-handwritten
+      - TROCR_BATCH_SIZE=16
+      # The CPU worker pins these to stop the page pool fighting ONNXRuntime. On GPU
+      # the decode is off-CPU, so leave the detector its threads.
+      - OMP_NUM_THREADS=4
+      - ONNXRUNTIME_INTRA_OP_NUM_THREADS=4
+      - HF_HOME=/models
+    volumes:
+      # A 1.3GB download should survive a container rebuild.
+      - hf-models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  hf-models:

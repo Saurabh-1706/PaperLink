@@ -377,10 +377,16 @@ it is an import error or a silent fallback. The CPU equivalent is Phase 6.
 Run through the real routing path (`LINE_SCRIPT_MODE=route`,
 `LINE_RECOGNIZER=trocr`) over Biology page 4, the page with a committed transcription:
 
-| Config | CER | WER | Lines replaced |
-|---|---|---|---|
-| RapidOCR only | 0.459 | 0.875 | 0 |
-| + TrOCR (small) | **0.274** | **0.573** | 10 of 14 |
+| Config | CER | WER | Lines replaced | Page wall |
+|---|---|---|---|---|
+| RapidOCR only | 0.459 | 0.875 | 0 | 11.2 s |
+| + TrOCR small | 0.274 | 0.573 | 10 of 14 | 14.7 s |
+| + TrOCR **base** | **0.204** | **0.500** | 9 of 14 | 97.9 s |
+
+`base` beats `small` clearly — CER 0.204 against 0.274, a **56% reduction from the
+RapidOCR baseline**. It is also ~7 s/line on CPU against 0.93 s/line for small, which
+is the entire argument for the GPU overlay: on CPU the better model is unusable, on GPU
+it is the obvious default. `docker-compose.gpu.yml` therefore pins `base`.
 
 **A 40% relative CER reduction, from the *small* model, on CPU.** The guards did their
 job: 10 of 14 lines were replaced, the rest declined.
@@ -407,16 +413,15 @@ above is CPU. Nothing further needs writing — enabling is configuration plus a
 verification run.
 
 ```bash
-pip install torch transformers sentencepiece
+./vedaai.sh up --gpu          # or --all to containerise MongoDB too
 ```
 
-```bash
-LINE_RECOGNIZER=trocr
-LINE_SCRIPT_MODE=route
-TROCR_DEVICE=cuda
-TROCR_MODEL=microsoft/trocr-base-handwritten
-TROCR_BATCH_SIZE=16
-```
+That builds `docker/Dockerfile.worker.gpu` (PyTorch CUDA runtime, torch and CUDA already
+matched) and applies `docker-compose.gpu.yml`, which sets `LINE_RECOGNIZER=trocr`,
+`TROCR_DEVICE=cuda`, `TROCR_MODEL=microsoft/trocr-base-handwritten` and reserves the
+device. Weights live in a named volume so a 1.3 GB download survives a rebuild. The
+script preflights the NVIDIA Container Toolkit and refuses to start rather than silently
+decoding on CPU at ~7 s/line.
 
 Then verify on your own handwriting before trusting it:
 
@@ -432,10 +437,10 @@ production, and again if the model changes.
 `ProviderUnavailableError` naming the setting, rather than a torch assertion from inside
 `.to()` after the weights have already been downloaded.
 
-Two expectations worth holding loosely, since neither is measured here: batch decode on
-GPU should fall from the 0.93 s/line measured on CPU to roughly 0.05-0.1 s/line, and
-`trocr-base` should beat `trocr-small` — CPU cost is the only reason `small` was used
-for the numbers above.
+`trocr-base` beating `trocr-small` is now measured (0.204 vs 0.274), not assumed. The
+remaining projection is GPU decode speed: batch decode should fall from the 0.93 s/line
+(small) and ~7 s/line (base) measured on CPU to roughly 0.05-0.1 s/line. That number is
+unverified — no CUDA device was available.
 
 **Exit criterion.** CER improvement on handwritten fixtures with the guards active, and
 a recorded latency cost. Merged disabled on CPU.
