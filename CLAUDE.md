@@ -68,6 +68,8 @@ python -c "from app.db.session import create_all; create_all()"   # indexes
 - Cross-tenant access returns 404, never 403 — storage reads included.
 - Real rollback requires a replica set (`MONGO_TRANSACTIONS=true`); on standalone mongod
   only unflushed writes are discarded, so writes are idempotent and flushed late.
-- `needs_review` mappings are never auto-graded.
+- `needs_review` mappings never score. They may carry a `provisional` grade so a
+  teacher sees a starting point, but it is excluded from `graded_count`,
+  `total_score` and `percentage` until a human confirms the mapping.
 - Processing is async (Celery); handlers enqueue and read only.
 - Uniform error envelope: `{"error": {"code", "message", "details"}}`.

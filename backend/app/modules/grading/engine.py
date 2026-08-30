@@ -54,17 +54,33 @@ def grade_mapping(
         return None
     max_marks = question.max_marks or DEFAULT_MAX_MARKS
 
-    # The review gate.
+    # U5 — grade needs_review mappings as provisional instead of skipping entirely.
+    # A provisional grade shows the teacher a starting score with a clear warning.
     if mapping.review_status == ReviewStatus.NEEDS_REVIEW and mapping.mapping_type != MappingType.UNANSWERED:
-        return Grade(
-            question_id=mapping.question_id,
-            answer_id=mapping.answer_id,
-            score=0.0,
-            max_score=max_marks,
-            method="skipped",
-            skipped_reason="mapping_needs_review",
-            feedback="Held for review: the answer assigned to this question is uncertain.",
-        )
+        answer = answers.get(mapping.answer_id or "")
+        if answer is None or not answer.normalized_text.strip():
+            return Grade(
+                question_id=mapping.question_id,
+                answer_id=mapping.answer_id,
+                score=0.0,
+                max_score=max_marks,
+                method="skipped",
+                skipped_reason="mapping_needs_review",
+                feedback="Held for review: the answer assigned to this question is uncertain.",
+            )
+        # Attempt LLM grading; fall back to deterministic. Mark as provisional.
+        grade = None
+        if llm is not None:
+            grade = _llm_grade(question, answer, rubric, max_marks, llm)
+        if grade is None:
+            grade = _fallback_grade(question, answer, max_marks)
+        return grade.model_copy(update={
+            "method": PROVISIONAL,
+            # Carries the same reason a skipped grade would, so a caller can say *why*
+            # the score is being withheld without special-casing the two methods.
+            "skipped_reason": "mapping_needs_review",
+            "feedback": "[PROVISIONAL — mapping unconfirmed] " + grade.feedback,
+        })
 
     answer = answers.get(mapping.answer_id or "")
     if mapping.mapping_type == MappingType.UNANSWERED or answer is None or not answer.normalized_text.strip():
@@ -184,13 +200,35 @@ def _feedback_from_breakdown(breakdown: list[CriterionScore]) -> str:
     return "Weak or missing coverage of: " + ", ".join(missing) + "."
 
 
+# A grade carrying this method came from a mapping nobody has confirmed. It is shown to
+# the teacher as a starting point and is never part of the reported score.
+PROVISIONAL = "provisional"
+HELD_METHODS = frozenset({"skipped", PROVISIONAL})
+
+
 def assessment_summary(grades: list[Grade]) -> dict[str, float | int]:
-    scored = [grade for grade in grades if grade.method != "skipped"]
+    """Totals for an assessment. Provisional grades are held, not counted.
+
+    U5 grades `needs_review` mappings provisionally so the teacher sees a starting
+    score instead of a blank. That is a display affordance, and it must stop there: the
+    mapping is unconfirmed, so the answer may belong to a different question entirely.
+    Letting its score into `total_score` would put marks a human never approved into the
+    student's result, which is what "needs_review mappings are never auto-graded" exists
+    to prevent.
+
+    So the split is by *method*, not by presence: `graded_count`, `total_score` and
+    `percentage` describe confirmed grades alone, and `provisional_count` reports the
+    rest separately so a caller can show them without them counting.
+    """
+    scored = [grade for grade in grades if grade.method not in HELD_METHODS]
+    provisional = [grade for grade in grades if grade.method == PROVISIONAL]
     total = sum(grade.score for grade in scored)
     possible = sum(grade.max_score for grade in scored)
     return {
         "graded_count": len(scored),
         "held_for_review": len(grades) - len(scored),
+        "provisional_count": len(provisional),
+        "provisional_score": round(sum(grade.score for grade in provisional), 2),
         "total_score": round(total, 2),
         "max_score": round(possible, 2),
         "percentage": round(100 * total / possible, 2) if possible else 0.0,

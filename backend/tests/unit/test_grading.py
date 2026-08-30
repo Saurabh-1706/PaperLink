@@ -50,14 +50,28 @@ def _mapping(review: ReviewStatus, kind: MappingType = MappingType.DIRECT) -> Ma
     )
 
 
-def test_needs_review_mapping_is_never_graded():
+def test_needs_review_mapping_is_never_counted_toward_the_score():
+    """The invariant, stated as what it actually protects.
+
+    U5 gives an unconfirmed mapping a provisional grade so the teacher sees a starting
+    point rather than a blank. That is a display affordance. The mapping is still
+    unconfirmed -- the answer may belong to a different question entirely -- so the
+    score must not reach the student's total. Marking it and excluding it are two
+    separate obligations, and this asserts both.
+    """
     grade = grade_mapping(
         _mapping(ReviewStatus.NEEDS_REVIEW),
         {"q-1": _question()},
         {"a-1": _answer()},
     )
     assert grade is not None
-    assert grade.method == "skipped"
+    assert grade.method == "provisional"
+    assert grade.feedback.startswith("[PROVISIONAL")
+
+    summary = assessment_summary([grade])
+    assert summary["graded_count"] == 0, "a provisional grade is not a graded answer"
+    assert summary["total_score"] == 0.0, "an unconfirmed mapping cannot score marks"
+    assert summary["provisional_count"] == 1
     assert grade.skipped_reason == "mapping_needs_review"
     assert grade.score == 0.0
 
@@ -127,3 +141,7 @@ def test_summary_separates_graded_from_held():
     summary = assessment_summary([graded, held])
     assert summary["graded_count"] == 1
     assert summary["held_for_review"] == 1
+    # The held one is provisional, not skipped -- it carries a score for display, and
+    # that score stays out of the total.
+    assert summary["provisional_count"] == 1
+    assert summary["total_score"] == graded.score
