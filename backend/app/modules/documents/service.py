@@ -45,10 +45,13 @@ class DocumentService:
     ) -> IngestResult:
         validated = validate_pdf(data, declared_mime)
 
+        log.info("ingest started", extra={"assessment_id": assessment_id, "kind": str(kind), "pages": validated.page_count})
+
         existing = self.documents.by_checksum(
             organization_id, assessment_id, str(kind), validated.checksum
         )
         if existing is not None:
+            log.info("ingest skipped (duplicate)", extra={"assessment_id": assessment_id, "kind": str(kind), "document_id": existing.id})
             # Idempotent: re-uploading an identical file must not re-run OCR.
             return IngestResult(document=existing, ir=self.load_ir(existing), created=False)
 
@@ -108,6 +111,7 @@ class DocumentService:
 
         self._persist_ir(organization_id, created_by, document, output.ir)
         self.session.flush()
+        log.info("ingest complete", extra={"assessment_id": assessment_id, "kind": str(kind), "document_id": document.id})
         return IngestResult(document=document, ir=output.ir, created=True)
 
     def _persist_ir(

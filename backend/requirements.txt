@@ -21,11 +21,9 @@ redis>=5.1
 pymupdf>=1.24
 pillow>=10.4
 
-# OCR (imported lazily; selected by OCR_ENGINE). Paddle is the containerised
-# deployment engine; RapidOCR is the pip-installable ONNX engine that also runs
-# natively on Windows, where paddlepaddle has no wheel.
-paddleocr>=2.8
-paddlepaddle>=2.6
+# OCR (imported lazily; selected by OCR_ENGINE env var — ADR-004).
+# paddle* is excluded: it conflicts with onnxruntime on Python 3.12 and is not
+# used when OCR_ENGINE=rapid. Add it back only if switching to OCR_ENGINE=paddle.
 rapidocr-onnxruntime>=1.3
 
 # Mapping / scoring
@@ -37,3 +35,4 @@ rapidfuzz>=3.9
 langgraph>=0.2
 langchain-core>=0.3
 langchain-google-genai>=2.0
+langchain-groq>=0.3
