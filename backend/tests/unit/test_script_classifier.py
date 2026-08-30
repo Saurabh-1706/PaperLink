@@ -62,12 +62,24 @@ def test_handwriting_scores_strictly_higher_than_print():
     assert written.score > printed.score
 
 
-def test_short_line_is_uncertain_not_guessed():
-    """Two fragments carry no baseline, height or width spread — three of four signals
-    are blind, so the classifier must decline rather than route on confidence alone."""
-    boxes, texts, confidences = _handwritten_line(fragments=2)
+def test_single_box_line_is_scored_on_confidence_alone():
+    """A text detector usually returns one box per LINE, not one per word, so this is
+    the common case, not an edge case.
+
+    With no spread to measure, three of four signals are unavailable. They must be
+    dropped from the average, not counted as zero: zeroing them halves the score of
+    every single-box line and drags it toward PRINTED. Measured on a real page, that
+    bug classified 42 of 42 printed lines as UNCERTAIN and would have sent a
+    low-confidence handwritten line to the printed branch.
+    """
+    boxes, texts, confidences = _handwritten_line(fragments=1)
     verdict = classify_line(boxes, texts, confidences, THRESHOLD)
-    assert verdict.script is ScriptClass.UNCERTAIN
+    assert verdict.script is ScriptClass.HANDWRITTEN
+    assert set(verdict.signals) == {"confidence"}, "geometry signals must be absent, not 0.0"
+
+    printed_boxes, printed_texts, printed_conf = _printed_line(fragments=1)
+    printed = classify_line(printed_boxes, printed_texts, printed_conf, THRESHOLD)
+    assert printed.script is ScriptClass.PRINTED
 
 
 def test_empty_line_is_uncertain():

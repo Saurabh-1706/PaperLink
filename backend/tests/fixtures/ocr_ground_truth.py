@@ -72,9 +72,42 @@ SCANNED_FIXTURES: dict[str, Path] = {
     "biology_question_paper": DATA_DIR / "question-paper.pdf",
 }
 
-# Populated as transcriptions are produced. A fixture with a PDF but no ground truth is
-# still useful — it yields flagged-line counts and timings, just no CER.
-SCANNED_GROUND_TRUTH: dict[str, OCRGroundTruth] = {}
+# Page 4 of the Biology answer sheet, transcribed by eye on 2026-08-30.
+#
+# One page, not five, and that is deliberate: it is enough to produce a real CER for
+# handwriting, and a wrong transcription is worse than none because every later phase
+# is scored against it. The writer's letterforms are idiosyncratic (word-final "n"
+# reads as "rr", "th" as "Pr"), so the transcription records the *intended* text --
+# which is what grading needs -- rather than the glyph shapes.
+#
+# Page indices are 1-based to match IRPage.page_number.
+BIOLOGY_PAGE_4_LINES: list[str] = [
+    "SECTION - B",
+    "17. (a) 6 phosphodiester bonds are present in the double stranded",
+    "polynucleotide chain.",
+    "b) * 10 base pairs are present in each helical turn",
+    "* Distance between 2 base pairs = 0.34 nm = 3.4 A°",
+    "c) * In addition to H-bonds the stacking of base pairs one",
+    "over the other in a double helix confers additional stability.",
+    "* The presence of Thymine also confers additional stability.",
+    "18.",
+    "a) * Restrictions are imposed on MTP in India to check the",
+    "illegal female foeticide which is said to be relatively high",
+    "in our country.",
+]
+
+# The page of the scanned fixture the transcription covers.
+SCANNED_GROUND_TRUTH_PAGE = 4
+
+# A fixture with a PDF but no ground truth is still useful — it yields flagged-line
+# counts and timings, just no CER.
+SCANNED_GROUND_TRUTH: dict[str, OCRGroundTruth] = {
+    "biology_answer_sheet_p4": OCRGroundTruth(
+        fixture_id="biology_answer_sheet_p4",
+        lines=BIOLOGY_PAGE_4_LINES,
+        handwriting=True,
+    ),
+}
 
 
 def available_scanned_fixtures() -> dict[str, Path]:
@@ -90,6 +123,7 @@ __all__ = [
     "OCRGroundTruth",
     "SCANNED_FIXTURES",
     "SCANNED_GROUND_TRUTH",
+    "SCANNED_GROUND_TRUTH_PAGE",
     "SYNTHETIC_BUILDERS",
     "SYNTHETIC_GROUND_TRUTH",
     "available_scanned_fixtures",

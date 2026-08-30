@@ -229,10 +229,43 @@ model, testable exactly as the module rules require.
 - [x] Implement the score and threshold it into `printed` / `handwritten` / `uncertain`
 - [x] Add the classification to `IRBlock` in `app/schemas/ir.py`
 - [x] **Ship as telemetry only** — log the classification, change no routing behaviour
-- [ ] Measure the confusion rate against the fixtures before anything depends on it
+- [x] Measure the confusion rate against the fixtures before anything depends on it — done; found and fixed two calibration bugs, see below
 
 **Escalation rule.** Buy the layout model only if the measured confusion rate is too
 high, with that number in hand to justify it.
+
+### Measured result — 2026-08-30
+
+Two classes, both with genuine ground truth. Handwriting is page 4 of
+`data/Biology-1-5.pdf`, transcribed by eye into `SCANNED_GROUND_TRUTH`. Print needed no
+transcription: `data/question-paper.pdf` is a searchable PDF, so its own embedded text
+layer is ground truth — rasterising it and forcing the OCR path gives a printed control
+for free.
+
+| Class | Lines | CER | WER | Mean conf | Flagged | Classifier correct |
+|---|---|---|---|---|---|---|
+| Handwriting (Biology p4) | 14 | **0.459** | 0.875 | 0.462 | 10/14 | 12/13 (92.3%) |
+| Print (question paper p1) | 42 | **0.082** | 0.190 | 0.817 | 1/42 | 39/41 (95.1%) |
+
+Score separation is wide: printed lines run 0.02–0.39, handwritten 0.16–0.98.
+
+**This run found two bugs in the classifier**, both invisible on synthetic fixtures:
+
+1. **Every printed line came back `UNCERTAIN`** (42 of 42). RapidOCR's detector returns
+   one box per *line*, not one per word, so almost every run held a single fragment and
+   the `MIN_FRAGMENTS_FOR_GEOMETRY` guard declined before scoring.
+2. **The weighted sum zeroed unavailable signals**, which biases toward PRINTED. A
+   single-box handwritten line scored ~0.44 — under the threshold — so it would have
+   been routed to the printed branch. The score is now a weighted *average over the
+   signals that are available*.
+
+After the fix, print is 39/41 and handwriting 12/13. The two printed lines misread as
+handwritten are both low-confidence; `should_replace` still guards the consequence.
+
+**Interpretation.** CER 0.459 on handwriting is the number the whole plan exists for:
+nearly half of every handwritten character is wrong, against 0.082 on print from the
+same engine on the same page geometry. Preprocessing does not close a gap that size —
+the recogniser does. This is the evidence for Phase 5.
 
 **Exit criterion.** Confusion rate reported on the fixtures; no behaviour change merged.
 

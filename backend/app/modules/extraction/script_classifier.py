@@ -51,7 +51,9 @@ CONFIDENCE_FLOOR = 0.45
 # Below this score a line is PRINTED; above `threshold` it is HANDWRITTEN; the band
 # between is UNCERTAIN and never routed anywhere risky.
 UNCERTAIN_BAND = 0.10
-# A single-fragment line has no spread to measure, so three of four signals are blind.
+# Below this many fragments there is no spread to measure, so the three geometry
+# signals are skipped and the verdict rests on recogniser confidence alone. It
+# selects which signals apply -- it does not by itself force UNCERTAIN.
 MIN_FRAGMENTS_FOR_GEOMETRY = 3
 
 
@@ -127,28 +129,34 @@ def classify_line(
     confidences: list[float],
     threshold: float,
 ) -> ScriptVerdict:
-    """Score one line's fragments. Pure function: no DB, no network, no model."""
+    """Score one line's fragments. Pure function: no DB, no network, no model.
+
+    The score is a weighted average over the signals that are actually *available*, not
+    a weighted sum with the missing ones zeroed. That distinction is the whole
+    correctness of this function: a text detector usually returns one box per line
+    rather than one per word, so the three geometry signals have no spread to measure
+    and only confidence survives. Zeroing them instead would drag every single-box line
+    toward 0 -- i.e. toward PRINTED -- and quietly route handwriting to the wrong
+    recogniser while looking perfectly calibrated on multi-fragment lines.
+    """
     if not boxes:
         return ScriptVerdict(ScriptClass.UNCERTAIN, 0.0, {})
 
-    signals = {
-        "confidence": _confidence_signal(confidences),
-        "baseline": _baseline_signal(boxes),
-        "height": _height_signal(boxes),
-        "width": _width_signal(boxes, texts),
-    }
-    score = round(
-        signals["confidence"] * W_CONFIDENCE
-        + signals["baseline"] * W_BASELINE
-        + signals["height"] * W_HEIGHT
-        + signals["width"] * W_WIDTH,
-        4,
-    )
+    signals = {"confidence": _confidence_signal(confidences)}
+    weights = {"confidence": W_CONFIDENCE}
 
-    # A one- or two-fragment line only had the confidence signal available, so it can
-    # never earn a confident verdict on geometry it does not have.
-    if len(boxes) < MIN_FRAGMENTS_FOR_GEOMETRY:
-        return ScriptVerdict(ScriptClass.UNCERTAIN, score, signals)
+    if len(boxes) >= MIN_FRAGMENTS_FOR_GEOMETRY:
+        signals["baseline"] = _baseline_signal(boxes)
+        signals["height"] = _height_signal(boxes)
+        signals["width"] = _width_signal(boxes, texts)
+        weights["baseline"] = W_BASELINE
+        weights["height"] = W_HEIGHT
+        weights["width"] = W_WIDTH
+
+    total_weight = sum(weights.values())
+    score = round(
+        sum(signals[name] * weights[name] for name in signals) / total_weight, 4
+    )
 
     if score >= threshold:
         script = ScriptClass.HANDWRITTEN
