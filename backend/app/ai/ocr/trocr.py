@@ -67,6 +67,15 @@ class TrOCRLineRecognizer(LineRecognizer):
                     "TrOCR requires the 'torch' package, which is not installed."
                 ) from exc
 
+            # Fail loudly and early on a misconfigured device. Without this, asking for
+            # cuda on a box that has none surfaces as a torch assertion from deep inside
+            # .to(), after the weights have already been fetched and loaded.
+            if self._device.startswith("cuda") and not torch.cuda.is_available():
+                raise ProviderUnavailableError(
+                    f"TROCR_DEVICE={self._device!r} but no CUDA device is visible to torch. "
+                    "Set TROCR_DEVICE=cpu, or leave LINE_RECOGNIZER=none on this host."
+                )
+
             processor = TrOCRProcessor.from_pretrained(self._model_name)
             model = VisionEncoderDecoderModel.from_pretrained(self._model_name)
             model.to(self._device)

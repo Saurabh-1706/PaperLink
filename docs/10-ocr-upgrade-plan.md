@@ -398,6 +398,43 @@ transformers version `trocr-small-handwritten` also needs `sentencepiece` (witho
 the tokenizer is misread as a tiktoken file and load fails). None are in
 `requirements.txt` by design — installing them is part of enabling the flag.
 
+### Enabling on GPU
+
+Not exercised: no CUDA device was visible on the box this was built on, so every number
+above is CPU. Nothing further needs writing — enabling is configuration plus a
+verification run.
+
+```bash
+pip install torch transformers sentencepiece
+```
+
+```bash
+LINE_RECOGNIZER=trocr
+LINE_SCRIPT_MODE=route
+TROCR_DEVICE=cuda
+TROCR_MODEL=microsoft/trocr-base-handwritten
+TROCR_BATCH_SIZE=16
+```
+
+Then verify on your own handwriting before trusting it:
+
+```bash
+python -m app.scripts.trocr_eval --model microsoft/trocr-base-handwritten --device cuda
+```
+
+That script runs the real routing path over the page with a committed transcription and
+prints the CER delta with a worth-enabling verdict. Run it before flipping the flag in
+production, and again if the model changes.
+
+`TROCR_DEVICE=cuda` on a host with no visible CUDA device raises
+`ProviderUnavailableError` naming the setting, rather than a torch assertion from inside
+`.to()` after the weights have already been downloaded.
+
+Two expectations worth holding loosely, since neither is measured here: batch decode on
+GPU should fall from the 0.93 s/line measured on CPU to roughly 0.05-0.1 s/line, and
+`trocr-base` should beat `trocr-small` — CPU cost is the only reason `small` was used
+for the numbers above.
+
 **Exit criterion.** CER improvement on handwritten fixtures with the guards active, and
 a recorded latency cost. Merged disabled on CPU.
 

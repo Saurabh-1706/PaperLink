@@ -209,3 +209,23 @@ def test_trocr_raises_provider_unavailable_without_torch(monkeypatch):
     with pytest.raises(ProviderUnavailableError) as excinfo:
         recognizer.read([b"crop"])
     assert "torch" in str(excinfo.value)
+
+
+def test_cuda_device_without_a_gpu_fails_with_a_clear_message(monkeypatch):
+    """Asking for cuda on a CPU box must fail early and legibly.
+
+    Without the guard this surfaces as a torch assertion from inside .to(), after the
+    weights have already been downloaded and loaded -- minutes of work and a stack
+    trace that names neither the setting nor the fix.
+    """
+    torch = pytest.importorskip("torch")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+    from app.ai.ocr.trocr import TrOCRLineRecognizer
+    from app.core.errors import ProviderUnavailableError
+
+    recognizer = TrOCRLineRecognizer(model_name="microsoft/trocr-small-handwritten", device="cuda")
+    with pytest.raises(ProviderUnavailableError) as excinfo:
+        recognizer._lazy()
+    assert "TROCR_DEVICE" in str(excinfo.value)
+    assert "cuda" in str(excinfo.value)
