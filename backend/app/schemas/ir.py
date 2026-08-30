@@ -7,7 +7,13 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from app.schemas.common import BBox, BlockType, ExtractionMethod, PageClassification
+from app.schemas.common import (
+    BBox,
+    BlockType,
+    ExtractionMethod,
+    PageClassification,
+    ScriptClass,
+)
 
 
 class IRBlock(BaseModel):
@@ -18,6 +24,14 @@ class IRBlock(BaseModel):
     block_type: BlockType = BlockType.LINE
     reading_order: int = Field(ge=0)
     low_confidence: bool = False
+    # Routing hint from the deterministic line classifier. UNCERTAIN is the honest
+    # default: a block extracted from native PDF text was never classified at all.
+    script: ScriptClass = ScriptClass.UNCERTAIN
+    # Raw classifier score in [0,1], 1.0 = most handwriting-like. Kept so the confusion
+    # rate can be measured off stored IR without re-running extraction.
+    script_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    # Set when a LineRecognizer replaced the OCR text for this block.
+    recognizer: str | None = None
 
 
 class IRPage(BaseModel):
