@@ -108,6 +108,13 @@ class Settings(BaseSettings):
     jwt_access_ttl_seconds: int = 3600
     jwt_refresh_ttl_seconds: int = 14 * 24 * 3600
 
+    # Comma-separated list of origins allowed to call this API directly from a
+    # browser (e.g. "https://app.example.com,https://staging.example.com"). The
+    # intended caller is the Next.js BFF proxy, which attaches auth server-side and
+    # is never subject to CORS in the first place -- this only matters if the API
+    # port is ever reachable directly. "*" is fine for local development only.
+    cors_origins: str = "*"
+
     # Per-stage confidence thresholds, tuned from the eval suite.
     block_confidence_threshold: float = 0.60
     question_confidence_threshold: float = 0.70
