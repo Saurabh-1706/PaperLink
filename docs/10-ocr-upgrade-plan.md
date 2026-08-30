@@ -1,12 +1,14 @@
 # OCR Upgrade Plan — Handwriting Path
 
 **Date:** 2026-08-30
-**Status:** Phases 1-5 complete and measured (2026-08-30). Phase 6 not started.
-Phase 6 not started. The unticked boxes below are measurement runs, not code: they
-need real scanned papers with committed transcriptions, a contended box to show the
-thread-pinning delta, and a GPU to make Phase 5 worth enabling.
+**Status:** Phases 1-5 complete and measured (2026-08-30), plus Phase 5b. Phase 6 not
+started. TrOCR is measured on CPU (Phase 5) — a GPU is what makes it cheap enough to
+enable, not what makes it work. The remaining unticked boxes are measurement runs, not
+code: they need a contended box to show the thread-pinning delta, and a committed
+ground-truth answer count for the Phase 5b fixture.
 **Defaults:** every new behaviour ships off or telemetry-only — `OCR_FLATTEN_BACKGROUND=false`, `OCR_ADAPTIVE_THRESHOLD=false`, `LINE_SCRIPT_MODE=telemetry`, `LINE_RECOGNIZER=none`
-**Scope:** `app/modules/extraction/`, `app/ai/ocr/`, `app/workers/`
+**Scope:** `app/modules/extraction/`, `app/ai/ocr/`, `app/workers/`, and — for Phase 5b
+only — `app/modules/answer_pipeline/`
 **Does not change:** `docs/03-coordinate-contract.md`, ADR-001, any schema in `app/schemas/`
 
 Goal: raise handwriting transcription accuracy on answer sheets **and** reduce
@@ -440,6 +442,115 @@ a recorded latency cost. Merged disabled on CPU.
 
 **Touches:** `ai/ocr/recognizer.py` *(new)*, `ai/ocr/trocr.py` *(new)*,
 `ai/ocr/factory.py`, `core/config.py`
+
+---
+
+## Phase 5b — Structural probe: what a better recogniser does *not* fix
+
+**Date:** 2026-08-30. Prompted by a simple question — CER is the number Phase 5 reports,
+but CER measures only the text. Everything *structural* in the answer pipeline is
+decided from raw OCR text **before** `validate_transcriptions` can repair anything
+(`graphs/answer_graph.py:17`):
+
+```
+extract_answers(ir)          <- segmentation, labels, noise filter, confidence flags
+      |
+validate_transcriptions()    <- vision LLM repairs TEXT only
+```
+
+A recogniser upgrade cannot undo a decision taken upstream of it. So `structural_probe.py`
+counts the three things CER is blind to, over all five pages of `data/Biology-1-5.pdf`.
+
+### Baseline — before any fix
+
+| | Count |
+|---|---|
+| Blocks extracted | 64 |
+| Dropped by `_is_noise_block` before segmentation | 11 |
+| Segments produced | 31 |
+| Segments with a `detected_label` | 10 |
+| Answers flagged low-confidence | 24 / 31 |
+| Mean block confidence | 0.489 |
+| Wall time, 5 pages, warm | 31.7 s |
+
+Three things the numbers say:
+
+1. **The noise filter is mostly right.** The dropped blocks are `'2' '3' '4' '5'` on
+   pages 2-5 — page numbers, exactly what the filter is for. Only `'Q.'`, `'1q.'`,
+   `'04'` are real label loss. This was the failure mode expected to dominate, and it
+   does not.
+2. **Eight of the ten detected labels were wrong.** These are MCQ answers, and the
+   student's chosen option was being parsed as a sub-part:
+
+   | OCR text | parsed | correct |
+   |---|---|---|
+   | `8 (B) ard m` | `8.b` | `8` |
+   | `14 (B) Bom A  R ae ue...` | `14.b` | `14` |
+   | `18 (A) CH3,C02, H2` | `18.a` | `18` |
+   | `(B) 0.42` | `b` | no label at all |
+
+   A fabricated label is worse than a missing one: the mapping engine looks the
+   normalised value up directly, so `8.b` sends it hunting for a row that never existed
+   and the answer lands in `needs_review` — which is never auto-graded.
+3. **The trigger is one missing period, and a parser that flips on it.**
+   `'8. (B) real mcq'` parses correctly as `8`; `'8 (B) ard m'` does not. Handwriting
+   OCR drops the period, so `_NOISE_MCQ` (which requires `\d{1,2}\.`) misses the line
+   and `parse_label` then mis-levels it.
+
+### The fix
+
+`parse_answer_label` in `answer_pipeline/pipeline.py`, used by `_segment_page`.
+`question_pipeline/labels.py` is **deliberately untouched**: its own docstring says it
+is shared verbatim with the mapping engine, and on the question side `12 (a)` genuinely
+*is* a sub-part. The override therefore lives on the answer side only.
+
+The discriminator is **case** — option markers are uppercase `(A)`-`(D)`, printed
+sub-parts are lowercase `(a)`-`(h)`. The patterns are case-sensitive by design; adding
+`re.IGNORECASE` would collapse the only signal separating the two.
+
+### Measured result
+
+| | Before | After |
+|---|---|---|
+| Segments with a label | 10 | 6 |
+| **Labels that are correct** | **2** | **6** |
+| **Labels that are fabricated or mis-levelled** | **8** | **0** |
+
+The headline count drops 10 -> 6 and that is not a regression: four of the old ten were
+bare option letters carrying no question number, producing labels (`a`, `b`) that could
+never match any row. Usable labels tripled.
+
+- [x] `parse_answer_label` — MCQ option letters demoted, sub-parts untouched
+- [x] 16 tests in `tests/unit/test_answer_pipeline.py`, including one pinning
+      `labels.py`'s unchanged behaviour so the override is not "fixed" in the wrong file
+- [ ] Ground-truth answer count for the sheet — "31 segments" is still uncalibrated
+
+**Rejected: widening `_NOISE_MCQ` to make the period optional.** It looks like the
+matching half of the same fix and is the opposite. `_NOISE_MCQ` feeds `_is_noise_block`,
+which *deletes*; the regex was written for printed option lines bleeding onto the sheet,
+but on this paper those lines are the student's handwritten MCQ answers. Widening it
+would delete the four answers the label fix just recovered.
+
+### What this leaves for the recogniser
+
+Two residues in the label channel that the parser fix cannot touch, and Phase 5 can:
+
+- `6 (B) ...` is almost certainly **Q16** — the Section A sequence runs 12, 13, 14, `6`,
+  18 and OCR dropped the leading digit. A dropped character, squarely TrOCR's job.
+- `18` now appears on two different segments (one Section A MCQ, one Section B prose),
+  so label collisions are real and the channel is better, not clean.
+
+**Read together with Phase 5.** TrOCR earns its place on transcription — CER 0.459 ->
+0.274 is measured and real. It was *not* going to fix the label channel, which was the
+argument most often made for it: that was a deterministic parser bug, fixed for the cost
+of one function, no model and no GPU. Both results are worth having; they are answers to
+different questions.
+
+**Exit criterion.** Structural counts reported before and after on the frozen fixture,
+with the question-side parser demonstrably unchanged.
+
+**Touches:** `answer_pipeline/pipeline.py`, `tests/unit/test_answer_pipeline.py`,
+`structural_probe.py` *(new)*
 
 ---
 

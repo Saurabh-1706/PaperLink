@@ -113,3 +113,60 @@ def test_low_confidence_answers_are_flagged():
     page.blocks[0] = page.blocks[0].model_copy(update={"confidence": 0.3})
     result = extract_answers(_document([page]))
     assert result.low_confidence_answer_ids == [result.answers[0].answer_id]
+
+
+# --------------------------------------------------------- U8: MCQ option letters
+# On an answer sheet "8 (B) ..." is the student's chosen option, not sub-part b of Q8.
+# The shared parser in labels.py cannot tell the two apart and must not be changed:
+# on the QUESTION side "12 (a)" genuinely is a sub-part. These tests pin the answer-side
+# override, and the last two pin what it must leave alone.
+
+import pytest
+
+from app.modules.answer_pipeline.pipeline import parse_answer_label
+from app.modules.question_pipeline.labels import parse_label
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("8 (B) ard m", "8"),
+        ("14 (B) Bom A", "14"),
+        ("18 (A) CH3,C02, H2", "18"),
+        ("Ans. 8 (B) foo", "8"),
+        ("8. (B) real mcq", "8"),          # period present: already correct, stays correct
+        ("Q12 (D) something", "12"),
+    ],
+)
+def test_numbered_mcq_answer_keeps_the_question_number(text, expected):
+    parsed = parse_answer_label(text)
+    assert parsed is not None
+    assert parsed.normalized == expected
+
+
+@pytest.mark.parametrize("text", ["(B) 0.42", "(A) Boff A", "[C] 42"])
+def test_bare_option_letter_is_not_a_label(text):
+    """Inventing `b` fabricates a label with no top level that can never match a row."""
+    assert parse_answer_label(text) is None
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("12 (a) mitosis is", "12.a"),     # lowercase = genuine sub-part
+        ("(a) mitosis is", "a"),
+        ("11(a)(ii) text here", "11.a.ii"),
+        ("3) Calabelism", "3"),
+        ("Q5 State the", "5"),
+    ],
+)
+def test_genuine_sub_parts_are_untouched(text, expected):
+    parsed = parse_answer_label(text)
+    assert parsed is not None
+    assert parsed.normalized == expected
+
+
+def test_question_side_parser_is_unchanged():
+    """labels.py is shared verbatim; the override must live on the answer side only."""
+    assert parse_label("8 (B) ard m", allow_answer_prefix=True).normalized == "8.b"
+    assert parse_label("(B) 0.42", allow_answer_prefix=True).normalized == "b"
