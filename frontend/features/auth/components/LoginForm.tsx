@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { errorMessage } from "@/lib/api/errors";
+import { ApiError, errorMessage } from "@/lib/api/errors";
 import { useAuth } from "../hooks/useAuth";
 
 export default function LoginForm() {
@@ -24,7 +24,12 @@ export default function LoginForm() {
       router.replace(next);
       router.refresh();
     } catch (err) {
-      setError(errorMessage(err, "Could not sign in."));
+      const isDown = err instanceof ApiError && err.status === 503;
+      setError(
+        isDown
+          ? "The server is currently unavailable. Please try again later or contact your administrator."
+          : errorMessage(err, "Could not sign in.")
+      );
       setSubmitting(false);
     }
   }

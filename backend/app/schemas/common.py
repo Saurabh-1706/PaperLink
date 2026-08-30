@@ -34,6 +34,18 @@ class BlockType(StrEnum):
     WORD = "word"
 
 
+class ScriptClass(StrEnum):
+    """How a line was written, inferred from detector geometry alone.
+
+    Not a layout model's output and not a coordinate: it is a routing hint, so a wrong
+    value costs recognition quality, never bbox correctness (ADR-001).
+    """
+
+    PRINTED = "printed"
+    HANDWRITTEN = "handwritten"
+    UNCERTAIN = "uncertain"
+
+
 class MappingType(StrEnum):
     DIRECT = "direct"
     SEMANTIC = "semantic"

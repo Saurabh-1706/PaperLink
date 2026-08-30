@@ -56,7 +56,12 @@ def _ocr_bbox_accuracy() -> dict[str, float]:
     from app.schemas.common import BBox
 
     render = render_pages(question_paper_pdf())[0]
-    preprocessed = preprocess_for_ocr(render.image_bytes, target_long_edge=2000)
+    # Must match what _ocr_blocks will use, or the words are placed in one pixel
+    # space and the transform chain inverts them out of another.
+    preprocessed = preprocess_for_ocr(
+        render.image_bytes,
+        target_long_edge=extraction_pipeline.ocr_target_long_edge(handwriting=False),
+    )
     image = Image.open(io.BytesIO(preprocessed.image_bytes))
 
     truth = [

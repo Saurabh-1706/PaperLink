@@ -20,9 +20,18 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+
+# OCR on a noisy scan can emit any codepoint, including CJK. On Windows the default
+# console encoding is cp1252, so printing one crashes the run at the report stage --
+# after every expensive stage has already succeeded. Never let the reporter be the
+# thing that fails.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 from app.ai.llm.factory import get_llm_provider
 from app.ai.ocr.factory import get_ocr_engine

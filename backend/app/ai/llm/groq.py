@@ -1,7 +1,16 @@
-"""Gemini adapter, built on LangChain's chat model + structured output.
+"""Groq adapter, built on LangChain's ChatGroq.
 
-LangChain is used here and only here: inside a provider adapter called from graph
-nodes. It is never the orchestration layer (ADR-002).
+Same shape as the Gemini adapter (ADR-002: LangChain lives inside provider adapters,
+never in the orchestration layer), with two Groq-specific differences:
+
+* Text and vision run on different models. Groq's JSON-mode text models are text-only,
+  so `transcribe` uses a separate multimodal model (`GROQ_VISION_MODEL`). Leaving that
+  setting empty disables vision, and handwriting validation falls back to raw OCR text.
+* Images go in the OpenAI content-block shape (`image_url` as a dict), not Gemini's
+  flat string, and Groq rejects an image request over 20MB.
+
+Model ids on Groq are deprecated and replaced often. Verify the configured ids against
+`GET https://api.groq.com/openai/v1/models` rather than trusting the defaults here.
 """
 from __future__ import annotations
 
@@ -18,39 +27,53 @@ from app.core.logging import get_logger
 log = get_logger(__name__)
 
 
-class GeminiProvider(LLMProvider, DocumentVisionProvider):
-    name = "gemini"
+class GroqProvider(LLMProvider, DocumentVisionProvider):
+    name = "groq"
 
-    def __init__(self, model: str | None = None, api_key: str | None = None) -> None:
+    def __init__(
+        self,
+        model: str | None = None,
+        vision_model: str | None = None,
+        api_key: str | None = None,
+    ) -> None:
         super().__init__()
-        self._model_name = model or settings.llm_model
-        self._api_key = api_key or settings.gemini_api_key
-        self._client: Any | None = None
+        self._model_name = model or settings.groq_model
+        self._vision_model_name = vision_model if vision_model is not None else settings.groq_vision_model
+        self._api_key = api_key or settings.groq_api_key
+        self._clients: dict[str, Any] = {}
 
-    def _lazy(self) -> Any | None:
-        if self._client is None:
-            if not self._api_key:
-                return None
-            try:
-                from langchain_google_genai import (
-                    ChatGoogleGenerativeAI,  # type: ignore[import-not-found]
-                )
-            except ImportError:  # pragma: no cover - environment dependent
-                log.warning("langchain_google_genai not installed; falling back")
-                return None
-            self._client = ChatGoogleGenerativeAI(
-                model=self._model_name,
-                google_api_key=self._api_key,
-                temperature=0,
-                max_retries=max(1, settings.llm_max_attempts),
-            )
-        return self._client
+    def _lazy(self, model_name: str, json_mode: bool) -> Any | None:
+        if model_name in self._clients:
+            return self._clients[model_name]
+        if not self._api_key or not model_name:
+            return None
+        try:
+            from langchain_groq import ChatGroq  # type: ignore[import-not-found]
+        except ImportError:  # pragma: no cover - environment dependent
+            log.warning("langchain_groq not installed; falling back")
+            return None
+        kwargs: dict[str, Any] = {}
+        if json_mode and settings.groq_json_mode:
+            # Groq honours OpenAI's JSON mode; the prompt already says "JSON", which the
+            # API requires. A model that rejects it raises, and the caller falls back.
+            kwargs["model_kwargs"] = {"response_format": {"type": "json_object"}}
+        if settings.groq_base_url:
+            kwargs["base_url"] = settings.groq_base_url
+        client = ChatGroq(
+            model=model_name,
+            api_key=self._api_key,
+            temperature=0,
+            max_retries=max(1, settings.llm_max_attempts),
+            **kwargs,
+        )
+        self._clients[model_name] = client
+        return client
 
-    def _invoke(self, content: Any, schema: dict[str, Any]) -> dict[str, Any] | None:
+    def _invoke(self, content: Any, model_name: str, json_mode: bool) -> dict[str, Any] | None:
         if breaker.is_open(self.name):
             self.usage.detail.append("skipped: quota cooldown")
             return None
-        client = self._lazy()
+        client = self._lazy(model_name, json_mode)
         if client is None:
             return None
         try:  # pragma: no cover - requires network
@@ -64,19 +87,25 @@ class GeminiProvider(LLMProvider, DocumentVisionProvider):
             return parse_json(content_text(response.content))
         except Exception as exc:  # noqa: BLE001 - any provider failure degrades to fallback
             if breaker.is_quota_error(exc):
-                breaker.trip(self.name, self._model_name)
+                breaker.trip(self.name, model_name)
             else:
-                log.warning("gemini call failed", extra={"error": str(exc)})
+                log.warning("groq call failed", extra={"error": str(exc), "model": model_name})
             return None
 
     def complete_json(self, prompt: str, schema: dict[str, Any]) -> dict[str, Any] | None:
         instruction = f"{prompt}\n\nReturn ONLY JSON matching this schema:\n{json.dumps(schema)}"
-        return self._invoke(instruction, schema)
+        return self._invoke(instruction, self._model_name, json_mode=True)
 
     def structure_blocks(self, prompt: str, schema: dict[str, Any]) -> dict[str, Any] | None:
         return self.complete_json(prompt, schema)
 
     def transcribe(self, image_bytes: bytes, ocr_text: str) -> str | None:
+        if not self._vision_model_name:
+            return None
+        encoded = base64.b64encode(image_bytes).decode()
+        if len(encoded) > settings.groq_max_image_bytes:
+            log.warning("crop too large for groq vision", extra={"bytes": len(encoded)})
+            return None
         payload = [
             {
                 "type": "text",
@@ -86,12 +115,9 @@ class GeminiProvider(LLMProvider, DocumentVisionProvider):
                     "Do not describe the image and do not return coordinates."
                 ),
             },
-            {
-                "type": "image_url",
-                "image_url": f"data:image/png;base64,{base64.b64encode(image_bytes).decode()}",
-            },
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}},
         ]
-        result = self._invoke(payload, {"type": "object", "properties": {"text": {"type": "string"}}})
+        result = self._invoke(payload, self._vision_model_name, json_mode=True)
         if not result:
             return None
         text = result.get("text")
@@ -103,7 +129,18 @@ class GeminiProvider(LLMProvider, DocumentVisionProvider):
         ocr_lines: list[str],
         confidences: list[float] | None = None,
     ) -> list[str] | None:
-        """Correct all OCR lines on a full page in one vision call."""
+        """Correct all OCR lines on a full page in one vision call.
+
+        Sends the full page image + all OCR lines as numbered context. Lines with low
+        OCR confidence are annotated so the model prioritises them. One call per page
+        instead of one per answer segment — fewer API calls, more visual context.
+        """
+        if not self._vision_model_name:
+            return None
+        encoded = base64.b64encode(image_bytes).decode()
+        if len(encoded) > settings.groq_max_image_bytes:
+            log.warning("page image too large for groq vision", extra={"bytes": len(encoded)})
+            return None
         numbered = _format_lines_with_confidence(ocr_lines, confidences)
         payload = [
             {
@@ -121,12 +158,9 @@ class GeminiProvider(LLMProvider, DocumentVisionProvider):
                     f"OCR lines to correct:\n{numbered}"
                 ),
             },
-            {
-                "type": "image_url",
-                "image_url": f"data:image/png;base64,{base64.b64encode(image_bytes).decode()}",
-            },
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}},
         ]
-        result = self._invoke(payload, {"type": "object", "properties": {"lines": {"type": "array", "items": {"type": "string"}}}})
+        result = self._invoke(payload, self._vision_model_name, json_mode=False)
         if not result:
             return None
         lines = result.get("lines")

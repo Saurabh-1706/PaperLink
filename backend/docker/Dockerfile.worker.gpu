@@ -1,0 +1,38 @@
+# GPU worker: identical to Dockerfile.worker, but on a CUDA runtime with torch already
+# present so TrOCR (LINE_RECOGNIZER=trocr) can decode on the device.
+#
+# Built from the official PyTorch CUDA runtime rather than nvidia/cuda + pip install
+# torch: the wheel is multi-GB and pinning it against the right CUDA minor is the usual
+# way this image ends up silently on CPU. Starting from an image where torch and CUDA
+# already agree removes that class of mistake.
+#
+# Requires the NVIDIA Container Toolkit on the host. Without it the container starts but
+# sees no device, and the adapter raises ProviderUnavailableError naming TROCR_DEVICE
+# rather than failing deep inside torch.
+FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    # Where transformers caches model weights. Mounted as a named volume in
+    # docker-compose.gpu.yml so a 1.3GB download survives container replacement.
+    HF_HOME=/models
+
+WORKDIR /app
+
+# Same runtime libs as the CPU worker: PyMuPDF, PIL and onnxruntime all need them.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libglib2.0-0 libgl1 libgomp1 poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt requirements-gpu.txt ./
+# torch is already in the base image; --no-deps on it would be fragile, so let pip
+# resolve and skip the reinstall it decides is unnecessary.
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir -r requirements-gpu.txt
+
+COPY . .
+
+# Fail the build if the image cannot import what it exists to run.
+RUN python -c "import torch, transformers, sentencepiece; print('torch', torch.__version__)"
+
+CMD ["celery", "-A", "app.workers.celery_app.celery_app", "worker", "--loglevel=INFO"]

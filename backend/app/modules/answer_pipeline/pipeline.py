@@ -10,7 +10,12 @@ import unicodedata
 from dataclasses import dataclass, field
 
 from app.core.config import settings
-from app.modules.question_pipeline.labels import parse_label
+from app.modules.question_pipeline.labels import (
+    ANSWER_PREFIX,
+    ParsedLabel,
+    normalize_parts,
+    parse_label,
+)
 from app.schemas.common import ExtractionMethod, Region, union_all
 from app.schemas.ir import IRBlock, IRDocument
 from app.schemas.pipeline import AnswerPipelineResult, ExtractedAnswer
@@ -22,6 +27,57 @@ INDENT_SHIFT = 0.08         # a left-margin jump this large is a structural brea
 BOTTOM_OF_PAGE = 0.88       # a segment reaching below this may continue on the next page
 TOP_OF_PAGE = 0.18
 CONTINUATION_CUES = re.compile(r"\b(cont(?:d|inued)?\.?|p\.?t\.?o\.?)\b", re.IGNORECASE)
+
+
+# U8 — MCQ option letters are answers, not sub-part labels.
+# On an answer sheet "8 (B) ..." is the student's chosen option for Q8, not sub-part b
+# of Q8. `parse_label` cannot draw that distinction: it is shared verbatim with the
+# question pipeline (labels.py:2), where "12 (a)" genuinely IS a sub-part. So the
+# distinction is drawn here, on the answer side only, leaving question parsing untouched.
+#
+# The signal is CASE: option markers are uppercase (A)-(D); printed sub-parts are
+# lowercase (a)-(h). These patterns are deliberately case-SENSITIVE — adding
+# re.IGNORECASE would collapse the only thing telling the two apart.
+_MCQ_NUMBERED = re.compile(r"^\s*(?:Q(?:ues(?:tion)?)?\s*\.?\s*)?(\d{1,3})\s*[\.\):]?\s*[\(\[]\s*[A-D]\s*[\)\]]")
+_MCQ_BARE = re.compile(r"^\s*[\(\[]\s*[A-D]\s*[\)\]]")
+
+
+def parse_answer_label(text: str) -> ParsedLabel | None:
+    """`parse_label` for answer sheets, with MCQ option letters demoted.
+
+    Two corrections over the shared parser:
+      - "8 (B) ard m"  -> `8`, not `8.b`. The mapping engine looks up the normalised
+        label directly, so `8.b` sends it hunting for a row that does not exist and the
+        answer lands in `needs_review` instead of matching Q8.
+      - "(B) 0.42"     -> None. An option letter with no question number attached is
+        not a label at all; inventing `b` fabricates a top-level-free label that can
+        never match. Returning None lets segmentation fall back to geometry.
+    """
+    parsed = parse_label(text, allow_answer_prefix=True)
+    if parsed is None or parsed.sub is None or parsed.subsub is not None:
+        return parsed
+
+    source, offset = text, 0
+    prefix = ANSWER_PREFIX.match(text)
+    if prefix:
+        offset = prefix.end()
+        source = text[offset:]
+
+    numbered = _MCQ_NUMBERED.match(source)
+    if numbered:
+        end = offset + numbered.end()
+        return ParsedLabel(
+            display=text[:end].strip(),
+            normalized=normalize_parts(numbered.group(1), None, None),
+            level=0,
+            remainder=text[end:].strip(),
+            top=numbered.group(1),
+            sub=None,
+            subsub=None,
+        )
+    if parsed.top is None and _MCQ_BARE.match(source):
+        return None
+    return parsed
 
 
 @dataclass
@@ -66,7 +122,7 @@ def _segment_page(page_number: int, blocks: list[IRBlock]) -> list[_Segment]:
     segments: list[_Segment] = []
     current = _Segment(page=page_number)
     for index, block in enumerate(blocks):
-        parsed = parse_label(block.text, allow_answer_prefix=True)
+        parsed = parse_answer_label(block.text)
         starts_here = False
         if parsed is not None and len(parsed.display) <= 14:
             starts_here = True

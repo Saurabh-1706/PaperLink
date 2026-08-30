@@ -23,6 +23,92 @@ export DOCKER_BUILDKIT=1
 export COMPOSE_DOCKER_CLI_BUILD=1
 
 # ====================================================================
+# COMPOSE FILE SELECTION
+# ====================================================================
+# Overlays are opt-in flags rather than separate commands, so every existing
+# command (build, logs, health, ...) works unchanged against whichever stack the
+# flags select.
+#
+#   --gpu          CUDA worker + TrOCR handwriting recognition
+#   --with-mongo   run MongoDB in a container (replica set) instead of on the host
+#
+# Flags may appear anywhere: `./vedaai.sh up --gpu` and `./vedaai.sh --gpu up` are
+# the same thing.
+
+COMPOSE_FILES="-f docker-compose.yml"
+USE_GPU=0
+USE_MONGO=0
+ARGS=()
+
+for arg in "$@"; do
+    case "$arg" in
+        --gpu)        USE_GPU=1 ;;
+        --with-mongo) USE_MONGO=1 ;;
+        --all)        USE_GPU=1; USE_MONGO=1 ;;
+        *)            ARGS+=("$arg") ;;
+    esac
+done
+set -- "${ARGS[@]:-}"
+
+[ "$USE_MONGO" = "1" ] && COMPOSE_FILES="$COMPOSE_FILES -f docker-compose.mongo.yml"
+[ "$USE_GPU" = "1" ]   && COMPOSE_FILES="$COMPOSE_FILES -f docker-compose.gpu.yml"
+
+COMPOSE="docker compose $COMPOSE_FILES"
+
+# A GPU stack that silently runs on CPU is the failure worth catching early: TrOCR
+# decodes at ~7 s/line there instead of fractions of a second, so it looks like a
+# hang rather than a misconfiguration.
+preflight_gpu() {
+    [ "$USE_GPU" = "1" ] || return 0
+    print_header "GPU PREFLIGHT"
+    if docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi > /dev/null 2>&1; then
+        print_status "NVIDIA Container Toolkit is working; GPU visible to Docker"
+    else
+        print_error "Docker cannot see a GPU"
+        print_info "Install the NVIDIA Container Toolkit, then verify with:"
+        print_info "  docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi"
+        print_info "Or drop --gpu to run the CPU stack (TrOCR stays off)."
+        exit 1
+    fi
+}
+
+describe_stack() {
+    local gpu="CPU" mongo="host"
+    [ "$USE_GPU" = "1" ]   && gpu="GPU (TrOCR handwriting recognition on)"
+    [ "$USE_MONGO" = "1" ] && mongo="containerised (replica set, transactions on)"
+    print_info "worker: $gpu"
+    print_info "mongo:  $mongo"
+}
+
+# ====================================================================
+# ONE-COMMAND STARTUP
+# ====================================================================
+
+up() {
+    print_header "VEDAAI — FULL STACK"
+    describe_stack
+
+    if [ ! -f "backend/.env" ]; then
+        print_warning "backend/.env not found — creating it from .env.example"
+        cp backend/.env.example backend/.env
+        print_info "Add your API keys to backend/.env when you need the LLM stages"
+    fi
+
+    preflight_gpu
+
+    print_status "Building images..."
+    $COMPOSE build --parallel
+    print_status "Starting services..."
+    $COMPOSE up -d
+
+    if [ "$USE_MONGO" = "0" ]; then
+        print_info "Using MongoDB on the host; pass --with-mongo to containerise it"
+    fi
+
+    show_urls
+}
+
+# ====================================================================
 # BUILD COMMANDS
 # ====================================================================
 
@@ -42,10 +128,10 @@ init() {
     start_time=$(date +%s)
 
     print_status "Building all images (parallel)..."
-    docker compose build --parallel
+    $COMPOSE build --parallel
 
     print_status "Starting all services..."
-    docker compose up -d
+    $COMPOSE up -d
 
     end_time=$(date +%s)
     print_header "INIT COMPLETED in $((end_time - start_time))s"
@@ -60,7 +146,7 @@ build() {
     docker system prune -f
 
     start_time=$(date +%s)
-    docker compose build --no-cache --parallel
+    $COMPOSE build --no-cache --parallel
     end_time=$(date +%s)
 
     print_header "BUILD COMPLETED in $((end_time - start_time))s"
@@ -72,9 +158,9 @@ rebuild() {
 
     start_time=$(date +%s)
 
-    docker compose down --remove-orphans
-    docker compose build --parallel
-    docker compose up -d
+    $COMPOSE down --remove-orphans
+    $COMPOSE build --parallel
+    $COMPOSE up -d
 
     end_time=$(date +%s)
     print_header "REBUILD COMPLETED in $((end_time - start_time))s"
@@ -84,7 +170,7 @@ rebuild() {
 reload() {
     print_header "HOT RELOAD - Restart with Latest Containers"
     start_time=$(date +%s)
-    docker compose up -d --build
+    $COMPOSE up -d --build
     end_time=$(date +%s)
     print_status "Reloaded in $((end_time - start_time))s"
     show_urls
@@ -96,14 +182,14 @@ reload() {
 
 start() {
     print_status "Starting all services..."
-    docker compose up -d
+    $COMPOSE up -d
     print_status "Services started"
     show_urls
 }
 
 stop() {
     print_status "Stopping all services..."
-    docker compose down
+    $COMPOSE down
     print_status "Services stopped"
 }
 
@@ -121,11 +207,11 @@ logs() {
     local service="$2"
     if [ -z "$service" ]; then
         print_info "Showing logs for all services (Ctrl+C to exit)"
-        docker compose logs -f
+        $COMPOSE logs -f
     else
         case "$service" in
             api|worker|frontend|redis)
-                docker compose logs -f "$service"
+                $COMPOSE logs -f "$service"
                 ;;
             *)
                 print_error "Unknown service: $service"
@@ -138,7 +224,7 @@ logs() {
 
 status() {
     print_header "SERVICE STATUS"
-    docker compose ps
+    $COMPOSE ps
     echo ""
     print_header "RESOURCE USAGE"
     docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}"
@@ -162,7 +248,7 @@ health() {
     fi
 
     echo -n "Redis:    "
-    if docker compose exec -T redis redis-cli ping > /dev/null 2>&1; then
+    if $COMPOSE exec -T redis redis-cli ping > /dev/null 2>&1; then
         print_status "Healthy"
     else
         print_error "Unhealthy / not running"
@@ -188,7 +274,7 @@ clean() {
         exit 0
     fi
 
-    docker compose down -v --remove-orphans
+    $COMPOSE down -v --remove-orphans
     docker rmi $(docker images -q 'vedaai*') 2>/dev/null || true
     docker builder prune -a -f
     docker system prune -a -f --volumes
@@ -220,7 +306,8 @@ show_urls() {
 # MAIN
 # ====================================================================
 
-case "$1" in
+case "${1:-}" in
+    up)       up ;;
     init)     init ;;
     build)    build ;;
     rebuild)  rebuild ;;
@@ -241,6 +328,7 @@ case "$1" in
         echo "============================================================"
         echo ""
         echo "BUILD & DEPLOYMENT"
+        echo "  up        - Build + start EVERYTHING (use this)"
         echo "  init      - Build images + start stack (first-time / dep changes)"
         echo "  build     - Build images only (no startup)"
         echo "  rebuild   - Incremental rebuild (code changes only)"
@@ -256,6 +344,15 @@ case "$1" in
         echo "  status      - Container status + resource usage"
         echo "  health      - Health checks for api, frontend, redis"
         echo "  metrics     - CPU / memory summary"
+        echo ""
+        echo "STACK FLAGS (combine with any command)"
+        echo "  --gpu         CUDA worker + TrOCR handwriting recognition"
+        echo "  --with-mongo  run MongoDB in a container instead of on the host"
+        echo "  --all         both of the above"
+        echo ""
+        echo "  ./vedaai.sh up                 CPU stack, host mongo"
+        echo "  ./vedaai.sh up --all           GPU stack, containerised mongo"
+        echo "  ./vedaai.sh logs worker --gpu  logs from the GPU worker"
         echo ""
         echo "MAINTENANCE"
         echo "  clean     - Remove containers, images, volumes (destructive)"

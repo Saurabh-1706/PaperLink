@@ -1,0 +1,50 @@
+# Containerised MongoDB overlay, so the stack needs nothing installed on the host:
+#
+#     ./vedaai.sh up --with-mongo
+#
+# docker-compose.yml deliberately uses the MongoDB installed on the host. That is the
+# right default when you already have data there. This overlay is for the other case --
+# a clean machine, CI, or a demo -- where "one command brings the project up" should be
+# literally true.
+#
+# It runs a SINGLE-NODE REPLICA SET rather than a standalone mongod, which is what makes
+# multi-document transactions available. docs/08-deployment.md and the MONGO_TRANSACTIONS
+# flag exist precisely because a standalone server cannot roll back; with this overlay
+# that limitation is gone, so the flag is turned on here.
+services:
+  mongo:
+    image: mongo:7
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    ports: ["27017:27017"]
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      # Initiate the replica set on first boot, then report healthy once it has a
+      # primary. rs.initiate() throws once already-initialised, hence the try/catch:
+      # the health check must be idempotent because it runs on every interval.
+      test: >
+        mongosh --quiet --eval "
+          try { rs.status().ok }
+          catch (e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongo:27017'}]}).ok }
+        "
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 10s
+
+  api:
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/?replicaSet=rs0
+      - MONGO_TRANSACTIONS=true
+    depends_on:
+      mongo: {condition: service_healthy}
+
+  worker:
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/?replicaSet=rs0
+      - MONGO_TRANSACTIONS=true
+    depends_on:
+      mongo: {condition: service_healthy}
+
+volumes:
+  mongo-data:

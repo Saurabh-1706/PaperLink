@@ -37,7 +37,6 @@ coverage/
 
 # Runtime storage / local sample inputs (not source)
 data/
-storage/
 
 # OS / editor
 .DS_Store
@@ -45,3 +44,6 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# Backend runtime output: local storage, e2e overlays, GridFS fallback
+backend/var/

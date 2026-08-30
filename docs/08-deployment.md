@@ -79,8 +79,11 @@ is committed; `.env` is not.
 | `REDIS_URL` | Broker + cache |
 | `STORAGE_BACKEND` | `gridfs` (default) or `local` |
 | `GRIDFS_BUCKET` / `STORAGE_PATH` | Storage target |
-| `LLM_PROVIDER` | `gemini` (default) or `openai` |
-| `GEMINI_API_KEY` / `OPENAI_API_KEY` | Provider credentials |
+| `LLM_PROVIDER` | `gemini`, `groq`, or `null`. `openai` is accepted but has no adapter yet and resolves to `null` |
+| `VISION_PROVIDER` | Provider for handwriting validation; `auto` (default) follows `LLM_PROVIDER` |
+| `GEMINI_API_KEY` / `GROQ_API_KEY` | Provider credentials |
+| `LLM_MODEL` / `GROQ_MODEL` / `GROQ_VISION_MODEL` | Model ids. Groq deprecates ids often -- verify against `GET https://api.groq.com/openai/v1/models`; an empty `GROQ_VISION_MODEL` disables vision |
+| `LLM_MAX_ATTEMPTS` / `LLM_QUOTA_COOLDOWN_SECONDS` | Attempts per call, and how long to skip the provider after a quota refusal |
 | `OCR_ENGINE` | `paddle` (default) or `doctr` |
 | `RENDER_DPI` | Page render DPI (default 300) |
 | `JWT_SECRET`, `JWT_*_TTL` | Auth |
