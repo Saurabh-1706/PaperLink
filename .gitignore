@@ -44,3 +44,6 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# Backend runtime output: local storage, e2e overlays, GridFS fallback
+backend/var/
