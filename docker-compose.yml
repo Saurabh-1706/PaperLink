@@ -3,19 +3,28 @@ services:
   # host (Windows service "MongoDB", port 27017). Containers reach it through
   # host.docker.internal; the extra_hosts entry makes that name resolve on Linux too,
   # where Docker Desktop does not provide it for free.
+
   redis:
     image: redis:7-alpine
     ports: ["6379:6379"]
+    networks: [app-network]
 
   api:
     build:
       context: ./backend
       dockerfile: docker/Dockerfile.api
     env_file: ./backend/.env
+    environment:
+      # localhost doesn't resolve to the host inside a container — use the
+      # host-gateway alias instead. All other settings come from .env as-is.
+      - MONGO_URI=mongodb://host.docker.internal:27017/
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_TASK_ALWAYS_EAGER=false
     ports: ["8000:8000"]
     extra_hosts: ["host.docker.internal:host-gateway"]
     depends_on:
       redis: {condition: service_started}
+    networks: [app-network]
 
   worker:
     build:
@@ -23,6 +32,11 @@ services:
       dockerfile: docker/Dockerfile.worker
     env_file: ./backend/.env
     environment:
+      # localhost doesn't resolve to the host inside a container — use the
+      # host-gateway alias instead. All other settings come from .env as-is.
+      - MONGO_URI=mongodb://host.docker.internal:27017/
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_TASK_ALWAYS_EAGER=false
       # Thread pinning. Three thread pools multiply on this service:
       #   Celery prefork    --concurrency=4          -> 4 processes
       #   page pool         ThreadPoolExecutor(4)    -> up to 4 threads per process
@@ -36,15 +50,18 @@ services:
     extra_hosts: ["host.docker.internal:host-gateway"]
     depends_on:
       redis: {condition: service_started}
+    networks: [app-network]
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    env_file: ./frontend/.env.local
     ports: ["3000:3000"]
-    environment:
-      # Server-side only: the BFF route handlers in app/api/* call the API from
-      # inside this container, where localhost is the container itself.
-      - BACKEND_API_URL=http://api:8000
     depends_on:
-      - api
+      api: {condition: service_started}
+    networks: [app-network]
+
+networks:
+  app-network:
+    driver: bridge

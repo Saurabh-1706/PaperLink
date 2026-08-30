@@ -48,6 +48,7 @@ export function toQuestion(dto: QuestionDto): Question {
     text: dto.text,
     marks: dto.max_marks,
     order: dto.order_index,
+    parentId: dto.parent_id,
   };
 }
 

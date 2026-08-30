@@ -115,32 +115,12 @@ export default function AnswerSheetCanvas({
                   />
 
                   {regionsOnPage.map((r, i) => {
-                    const isCorrect = selectedMapping?.isCorrect;
-                    let highlightClass = "border-outline border-dashed bg-surface-container-highest/30 hover:bg-surface-container-highest/50";
-                    let icon = "edit_note";
-                    let iconClass = "text-outline bg-surface-container-highest text-on-surface-variant";
-                    let tooltipClass = "bg-surface-container-highest text-on-surface-variant";
-                    let tooltipText = `Q${selectedMapping?.questionNumber}: Unanswered`;
-                    
-                    if (isCorrect === true) {
-                      highlightClass = "border-[#16A34A] bg-[#22C55E]/10 shadow-[0_0_15px_rgba(34,197,94,0.3)] hover:bg-[#22C55E]/20";
-                      icon = "check";
-                      iconClass = "bg-[#16A34A] text-white hidden"; // Hide icon in favor of tooltip
-                      tooltipClass = "bg-[#16A34A] text-white";
-                      tooltipText = `Q${selectedMapping?.questionNumber}`;
-                    } else if (isCorrect === false) {
-                      highlightClass = "border-[#DC2626] bg-[#EF4444]/10 shadow-[0_0_15px_rgba(239,68,68,0.3)] hover:bg-[#EF4444]/20";
-                      icon = "close";
-                      iconClass = "bg-[#DC2626] text-white hidden";
-                      tooltipClass = "bg-[#DC2626] text-white";
-                      tooltipText = `Q${selectedMapping?.questionNumber}`;
-                    } else if (selectedMapping?.status === "answered") {
-                      highlightClass = "border-secondary bg-secondary/10 shadow-[0_0_15px_rgba(170,54,18,0.3)] hover:bg-secondary/20";
-                      icon = "edit_note";
-                      iconClass = "bg-secondary text-white hidden";
-                      tooltipClass = "bg-secondary text-white";
-                      tooltipText = `Q${selectedMapping?.questionNumber}`;
-                    }
+                    // Correctness is already conveyed by the status badge in the
+                    // question list; the block itself is just a "look here"
+                    // location marker, so it always highlights green.
+                    const highlightClass = "border-[#16A34A] bg-[#22C55E]/10 shadow-[0_0_15px_rgba(34,197,94,0.3)] hover:bg-[#22C55E]/20";
+                    const tooltipClass = "bg-[#16A34A] text-white";
+                    const tooltipText = `Q${selectedMapping?.questionNumber}`;
 
                     return (
                       <div
@@ -153,9 +133,6 @@ export default function AnswerSheetCanvas({
                           height: `${r.height * 100}%`,
                         }}
                       >
-                        {!isCorrect && selectedMapping?.status !== "answered" && (
-                          <span className={`material-symbols-outlined text-outline text-[32px] opacity-50 group-hover:opacity-100 transition-opacity`}>{icon}</span>
-                        )}
                         <span className={`font-label-sm text-[10px] px-2 py-0.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity mt-2 ${tooltipClass}`}>
                           {tooltipText}
                         </span>

@@ -27,6 +27,7 @@ export interface Question {
   text: string;
   marks?: number | null;
   order: number; // printed order, 0-based
+  parentId: string | null; // null for top-level questions; set for sub-parts
 }
 
 /**

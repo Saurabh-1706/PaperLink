@@ -1,7 +1,7 @@
 """Seed a demo organization with one user per role, and (optionally) a processed
 assessment built from the generated fixtures.
 
-    python -m app.scripts.seed_demo [--with-assessment]
+    python -m app.scripts.seed_demo [--with-assessment] [--clean]
 """
 from __future__ import annotations
 
@@ -25,12 +25,46 @@ DEMO_USERS = [
 ]
 
 
+def _clean_demo_data() -> None:
+    """Drop any existing demo users/organizations so the script is re-runnable."""
+    from app.db.session import get_database
+
+    db = get_database()
+    demo_emails = [email for email, _ in DEMO_USERS]
+
+    # Find orgs that own these demo users and drop everything related.
+    users_col = db["users"]
+    orgs_col = db["organizations"]
+
+    existing = list(users_col.find({"email": {"$in": demo_emails}}, {"organization_id": 1}))
+    org_ids = list({u["organization_id"] for u in existing})
+
+    if org_ids:
+        for col_name in db.list_collection_names():
+            col = db[col_name]
+            # Collections with an organization_id field — drop matching docs.
+            col.delete_many({"organization_id": {"$in": org_ids}})
+        orgs_col.delete_many({"_id": {"$in": org_ids}})
+        print(f"[clean] removed {len(org_ids)} demo organization(s) and their data.")
+    else:
+        print("[clean] nothing to remove.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--with-assessment", action="store_true")
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="Drop existing demo data before seeding (makes the script idempotent).",
+    )
     args = parser.parse_args()
 
     create_all()
+
+    if args.clean:
+        _clean_demo_data()
+
     with session_scope() as session:
         auth = AuthService(session)
         organization = auth.create_organization("Demo School")

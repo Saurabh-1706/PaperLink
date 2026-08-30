@@ -15,9 +15,9 @@ const PAGE: PageImage = {
 };
 
 const questions: Question[] = [
-  { id: "q1", number: "1", text: "Where does photosynthesis take place?", marks: 5, order: 0 },
-  { id: "q2", number: "2", text: "What is the role of the mitochondria?", marks: 5, order: 1 },
-  { id: "q3", number: "3", text: "Define osmosis.", marks: 5, order: 2 },
+  { id: "q1", number: "1", text: "Where does photosynthesis take place?", marks: 5, order: 0, parentId: null },
+  { id: "q2", number: "2", text: "What is the role of the mitochondria?", marks: 5, order: 1, parentId: null },
+  { id: "q3", number: "3", text: "Define osmosis.", marks: 5, order: 2, parentId: null },
 ];
 
 const mappings: MappedAnswer[] = [
