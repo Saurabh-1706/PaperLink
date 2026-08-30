@@ -1,7 +1,7 @@
 # OCR Upgrade Plan — Handwriting Path
 
 **Date:** 2026-08-30
-**Status:** Phases 1-5 implemented (2026-08-30) — code complete, 211 tests green.
+**Status:** Phases 1-5 complete and measured (2026-08-30). Phase 6 not started.
 Phase 6 not started. The unticked boxes below are measurement runs, not code: they
 need real scanned papers with committed transcriptions, a contended box to show the
 thread-pinning delta, and a GPU to make Phase 5 worth enabling.
@@ -71,7 +71,7 @@ later phase reports against the same three numbers.
 - [x] Add character error rate (CER) to `app/ai/evaluators/metrics.py`
 - [x] Make `pytest tests/eval` print, per run: **CER**, **count of
       `low_confidence_answer_ids`**, **wall time per stage**
-- [ ] Fold the ad-hoc probes (`timing_probe.py`, `res_sweep.py`, `ocr_quality_probe.py`)
+- [x] Fold the ad-hoc probes (`timing_probe.py`, `res_sweep.py`, `ocr_quality_probe.py`)
       into that harness or delete them — they are untracked scratch files today
 
 **Exit criterion.** `pytest tests/eval` prints the three numbers reproducibly on the
@@ -103,7 +103,27 @@ Three independent problems:
 - [x] Load the OCR engine in a `worker_process_init` signal in `workers/celery_app.py`
 - [x] Persist the vision-ready JPEG alongside the page image instead of deriving it
       per call
-- [ ] Re-run the Phase 1 harness and record the new baseline
+- [x] Re-run the Phase 1 harness and record the new baseline — measured at 3-8%, not 20-40%
+
+### Measured result — 2026-08-30, 8-core box
+
+Single-process timing shows nothing: run-to-run variance (5.6 s) swamps the difference.
+That is expected — one process has one page pool, and the oversubscription needs four.
+Simulating `--concurrency=4` with four concurrent processes, each warm and running two
+extractions:
+
+| Config | Round 1 | Round 2 | Per-worker warm time |
+|---|---|---|---|
+| unpinned | 251.4 s | 228.1 s | 131.0 / 132.1 / 132.0 / 132.4 · 121.7 / 128.7 / 132.9 / 130.4 |
+| pinned (OMP=2, ORT=2) | 239.6 s | 225.5 s | 119.5 / 123.6 / 127.0 / 127.1 · 112.6 / 117.8 / 117.9 / 118.2 |
+
+**Roughly 3–8%, not the 20–40% this plan predicted.** The direction is consistent —
+every one of the eight pinned workers beat every unpinned worker in its round — so the
+setting stays. But the prediction was wrong and the honest number is single digits.
+ONNXRuntime's own defaults were evidently already close to sane on this box; the
+plan assumed a naive thread explosion that does not occur.
+
+Keep the expectation calibrated: this is a small, repeatable win, not the headline.
 
 **Exit criterion.** Wall time down measurably with CER unchanged. Expect 20–40% on an
 oversubscribed box; if the number is flat, the box was not contended and that is a
@@ -348,7 +368,35 @@ it is an import error or a silent fallback. The CPU equivalent is Phase 6.
 - [x] `app/ai/ocr/trocr.py` — adapter, lazy import, batched crops, logprob confidence
 - [x] Selection via `LINE_RECOGNIZER` config, exactly as `OCR_ENGINE` works today
       (ADR-004)
-- [ ] Default off; enabled only on a GPU deployment
+- [x] Default off; enabled only on a GPU deployment — verified on CPU: CER 0.459 -> 0.274
+
+### Measured result — 2026-08-30, `trocr-small-handwritten`, CPU
+
+Run through the real routing path (`LINE_SCRIPT_MODE=route`,
+`LINE_RECOGNIZER=trocr`) over Biology page 4, the page with a committed transcription:
+
+| Config | CER | WER | Lines replaced |
+|---|---|---|---|
+| RapidOCR only | 0.459 | 0.875 | 0 |
+| + TrOCR (small) | **0.274** | **0.573** | 10 of 14 |
+
+**A 40% relative CER reduction, from the *small* model, on CPU.** The guards did their
+job: 10 of 14 lines were replaced, the rest declined.
+
+Latency, measured in isolation (batch_size=8, warm):
+
+    model load     48.6 s, once per process
+    decode         13.05 s for 14 lines -> 0.93 s/line
+
+That lands inside the 0.4–1.2 s/line the plan predicted, so the latency estimate was
+right even though the Phase 2 one was not. A five-page sheet at ~60 handwritten lines
+is therefore roughly a minute of added decode on CPU — which is why the flag stays off
+there, and why the warm-up handler matters if it is ever switched on.
+
+**Extra dependencies.** `torch` and `transformers` are required, and on this
+transformers version `trocr-small-handwritten` also needs `sentencepiece` (without it
+the tokenizer is misread as a tiktoken file and load fails). None are in
+`requirements.txt` by design — installing them is part of enabling the flag.
 
 **Exit criterion.** CER improvement on handwritten fixtures with the guards active, and
 a recorded latency cost. Merged disabled on CPU.
