@@ -1,62 +1,16 @@
 services:
   # MongoDB is NOT containerised: this project uses the MongoDB server installed on the
-  # host (Windows service "MongoDB", port 27017). Containers reach it through
+  # host (Windows service "MongoDB", port 27017). The container reaches it through
   # host.docker.internal; the extra_hosts entry makes that name resolve on Linux too,
   # where Docker Desktop does not provide it for free.
 
-  redis:
-    image: redis:7-alpine
-    ports: ["6379:6379"]
-    networks: [app-network]
-
-  api:
-    build:
-      context: ./backend
-      dockerfile: docker/Dockerfile.api
-    # MONGO_URI comes from .env as-is (Atlas' mongodb+srv:// resolves fine from
-    # inside a container — it's plain `localhost` that doesn't). Only override
-    # here what genuinely needs a compose-network-specific value.
-    env_file: ./backend/.env
-    environment:
-      - REDIS_URL=redis://redis:6379/0
-      - CELERY_TASK_ALWAYS_EAGER=false
-    ports: ["8000:8000"]
-    extra_hosts: ["host.docker.internal:host-gateway"]
-    depends_on:
-      redis: {condition: service_started}
-    networks: [app-network]
-
-  worker:
-    build:
-      context: ./backend
-      dockerfile: docker/Dockerfile.worker
-    env_file: ./backend/.env
-    environment:
-      - REDIS_URL=redis://redis:6379/0
-      - CELERY_TASK_ALWAYS_EAGER=false
-      # Thread pinning. Three thread pools multiply on this service:
-      #   Celery prefork    --concurrency=4          -> 4 processes
-      #   page pool         ThreadPoolExecutor(4)    -> up to 4 threads per process
-      #   ONNXRuntime       intra-op pool (defaults to core count)
-      # Left at defaults on an 8-core box that is 4 x 4 x 8 = up to 128 runnable
-      # threads competing for 8 cores; the contention presents as "the model is slow".
-      # Pinning the innermost pool to 2 caps the product at 4 x 4 x 2 = 32, which keeps
-      # every core busy without paying the context-switch tax.
-      - OMP_NUM_THREADS=2
-      - ONNXRUNTIME_INTRA_OP_NUM_THREADS=2
-    extra_hosts: ["host.docker.internal:host-gateway"]
-    depends_on:
-      redis: {condition: service_started}
-    networks: [app-network]
-
   frontend:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    env_file: ./frontend/.env.local
+      context: .
+      dockerfile: apps/web/Dockerfile
+    env_file: ./apps/web/.env.local
     ports: ["3000:3000"]
-    depends_on:
-      api: {condition: service_started}
+    extra_hosts: ["host.docker.internal:host-gateway"]
     networks: [app-network]
 
 networks:

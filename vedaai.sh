@@ -29,54 +29,31 @@ export COMPOSE_DOCKER_CLI_BUILD=1
 # command (build, logs, health, ...) works unchanged against whichever stack the
 # flags select.
 #
-#   --gpu          CUDA worker + TrOCR handwriting recognition
 #   --with-mongo   run MongoDB in a container (replica set) instead of on the host
 #
-# Flags may appear anywhere: `./vedaai.sh up --gpu` and `./vedaai.sh --gpu up` are
-# the same thing.
+# Flags may appear anywhere: `./vedaai.sh up --with-mongo` and
+# `./vedaai.sh --with-mongo up` are the same thing.
 
 COMPOSE_FILES="-f docker-compose.yml"
-USE_GPU=0
 USE_MONGO=0
 ARGS=()
 
 for arg in "$@"; do
     case "$arg" in
-        --gpu)        USE_GPU=1 ;;
         --with-mongo) USE_MONGO=1 ;;
-        --all)        USE_GPU=1; USE_MONGO=1 ;;
+        --all)        USE_MONGO=1 ;;
         *)            ARGS+=("$arg") ;;
     esac
 done
 set -- "${ARGS[@]:-}"
 
 [ "$USE_MONGO" = "1" ] && COMPOSE_FILES="$COMPOSE_FILES -f docker-compose.mongo.yml"
-[ "$USE_GPU" = "1" ]   && COMPOSE_FILES="$COMPOSE_FILES -f docker-compose.gpu.yml"
 
 COMPOSE="docker compose $COMPOSE_FILES"
 
-# A GPU stack that silently runs on CPU is the failure worth catching early: TrOCR
-# decodes at ~7 s/line there instead of fractions of a second, so it looks like a
-# hang rather than a misconfiguration.
-preflight_gpu() {
-    [ "$USE_GPU" = "1" ] || return 0
-    print_header "GPU PREFLIGHT"
-    if docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi > /dev/null 2>&1; then
-        print_status "NVIDIA Container Toolkit is working; GPU visible to Docker"
-    else
-        print_error "Docker cannot see a GPU"
-        print_info "Install the NVIDIA Container Toolkit, then verify with:"
-        print_info "  docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi"
-        print_info "Or drop --gpu to run the CPU stack (TrOCR stays off)."
-        exit 1
-    fi
-}
-
 describe_stack() {
-    local gpu="CPU" mongo="host"
-    [ "$USE_GPU" = "1" ]   && gpu="GPU (TrOCR handwriting recognition on)"
+    local mongo="host"
     [ "$USE_MONGO" = "1" ] && mongo="containerised (replica set, transactions on)"
-    print_info "worker: $gpu"
     print_info "mongo:  $mongo"
 }
 
@@ -88,13 +65,11 @@ up() {
     print_header "VEDAAI — FULL STACK"
     describe_stack
 
-    if [ ! -f "backend/.env" ]; then
-        print_warning "backend/.env not found — creating it from .env.example"
-        cp backend/.env.example backend/.env
-        print_info "Add your API keys to backend/.env when you need the LLM stages"
+    if [ ! -f "apps/web/.env.local" ]; then
+        print_warning "apps/web/.env.local not found — creating it from .env.example"
+        cp apps/web/.env.example apps/web/.env.local
+        print_info "Add your API keys to apps/web/.env.local when you need the AI stages"
     fi
-
-    preflight_gpu
 
     print_status "Building images..."
     $COMPOSE build --parallel
@@ -116,9 +91,9 @@ init() {
     print_header "FULL BUILD + START"
     print_info "Use this for first-time setup or when requirements change"
 
-    if [ ! -f "backend/.env" ]; then
-        print_error "backend/.env not found"
-        print_info "Copy backend/.env.example to backend/.env and configure it"
+    if [ ! -f "apps/web/.env.local" ]; then
+        print_error "apps/web/.env.local not found"
+        print_info "Copy apps/web/.env.example to apps/web/.env.local and configure it"
         exit 1
     fi
 
@@ -210,12 +185,12 @@ logs() {
         $COMPOSE logs -f
     else
         case "$service" in
-            api|worker|frontend|redis)
+            frontend|mongo)
                 $COMPOSE logs -f "$service"
                 ;;
             *)
                 print_error "Unknown service: $service"
-                print_info "Valid services: api, worker, frontend, redis"
+                print_info "Valid services: frontend, mongo (mongo only with --with-mongo)"
                 exit 1
                 ;;
         esac
@@ -233,13 +208,6 @@ status() {
 health() {
     print_header "HEALTH CHECKS"
 
-    echo -n "API:      "
-    if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
-        print_status "Healthy"
-    else
-        print_error "Unhealthy / not running"
-    fi
-
     echo -n "Frontend: "
     if curl -sf http://localhost:3000 > /dev/null 2>&1; then
         print_status "Healthy"
@@ -247,11 +215,13 @@ health() {
         print_error "Unhealthy / not running"
     fi
 
-    echo -n "Redis:    "
-    if $COMPOSE exec -T redis redis-cli ping > /dev/null 2>&1; then
-        print_status "Healthy"
-    else
-        print_error "Unhealthy / not running"
+    if [ "$USE_MONGO" = "1" ]; then
+        echo -n "Mongo:    "
+        if $COMPOSE exec -T mongo mongosh --quiet --eval "db.adminCommand('ping').ok" > /dev/null 2>&1; then
+            print_status "Healthy"
+        else
+            print_error "Unhealthy / not running"
+        fi
     fi
 }
 
@@ -296,9 +266,6 @@ show_urls() {
     echo ""
     print_header "SERVICE URLS"
     echo "  Frontend:  http://localhost:3000"
-    echo "  API:       http://localhost:8000"
-    echo "  API Docs:  http://localhost:8000/docs"
-    echo "  Redis:     localhost:6379"
     echo ""
 }
 
@@ -340,19 +307,18 @@ case "${1:-}" in
         echo "  restart   - Restart all services"
         echo ""
         echo "OBSERVABILITY"
-        echo "  logs [svc]  - Stream logs (api | worker | frontend | redis)"
+        echo "  logs [svc]  - Stream logs (frontend | mongo)"
         echo "  status      - Container status + resource usage"
-        echo "  health      - Health checks for api, frontend, redis"
+        echo "  health      - Health checks for frontend (+ mongo with --with-mongo)"
         echo "  metrics     - CPU / memory summary"
         echo ""
         echo "STACK FLAGS (combine with any command)"
-        echo "  --gpu         CUDA worker + TrOCR handwriting recognition"
         echo "  --with-mongo  run MongoDB in a container instead of on the host"
-        echo "  --all         both of the above"
+        echo "  --all         same as --with-mongo"
         echo ""
-        echo "  ./vedaai.sh up                 CPU stack, host mongo"
-        echo "  ./vedaai.sh up --all           GPU stack, containerised mongo"
-        echo "  ./vedaai.sh logs worker --gpu  logs from the GPU worker"
+        echo "  ./vedaai.sh up               host mongo"
+        echo "  ./vedaai.sh up --with-mongo  containerised mongo"
+        echo "  ./vedaai.sh logs frontend    frontend logs"
         echo ""
         echo "MAINTENANCE"
         echo "  clean     - Remove containers, images, volumes (destructive)"
@@ -360,8 +326,6 @@ case "${1:-}" in
         echo ""
         echo "URLS (when running)"
         echo "  Frontend:  http://localhost:3000"
-        echo "  API:       http://localhost:8000"
-        echo "  API Docs:  http://localhost:8000/docs"
         echo ""
         exit 1
         ;;

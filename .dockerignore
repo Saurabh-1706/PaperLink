@@ -1,0 +1,33 @@
+# Root .dockerignore — applies to any build using the monorepo root as context
+# (currently: apps/web/Dockerfile, see docker-compose.yml `frontend` service).
+
+# Node
+node_modules
+**/node_modules
+.next
+**/.next
+*.tsbuildinfo
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# VCS / editor
+.git
+.gitignore
+.vscode
+.idea
+
+# Docs, unrelated services — not needed to build the Next.js image
+docs
+backend
+README.md
+DOCKER.md
+
+# Python cruft (in case backend/ is ever included in a context)
+__pycache__
+*.pyc
+.venv
+venv

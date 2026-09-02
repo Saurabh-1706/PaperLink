@@ -1,14 +1,9 @@
 services:
-  api:
-    volumes:
-      - ./backend:/app
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-
-  worker:
-    volumes:
-      - ./backend:/app
-    command: celery -A app.workers.celery_app.celery_app worker --loglevel=info --concurrency=4 --uid=nobody
-
   frontend:
-    environment:
-      - BACKEND_API_URL=http://api:8000
+    build:
+      target: builder
+    volumes:
+      - ./apps/web:/app/apps/web
+      - /app/apps/web/node_modules
+      - /app/apps/web/.next
+    command: npm run dev --workspace=apps/web

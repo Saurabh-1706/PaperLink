@@ -32,14 +32,7 @@ services:
       retries: 20
       start_period: 10s
 
-  api:
-    environment:
-      - MONGO_URI=mongodb://mongo:27017/?replicaSet=rs0
-      - MONGO_TRANSACTIONS=true
-    depends_on:
-      mongo: {condition: service_healthy}
-
-  worker:
+  frontend:
     environment:
       - MONGO_URI=mongodb://mongo:27017/?replicaSet=rs0
       - MONGO_TRANSACTIONS=true

@@ -9,33 +9,26 @@
 | MongoDB | Running locally on port 27017 (Windows service) |
 
 > [!NOTE]
-> MongoDB runs on your **host machine**, not inside Docker. The containers reach it via
-> `host.docker.internal:27017`. Make sure your local `mongod` is started before running
-> `docker compose up`.
+> By default MongoDB runs on your **host machine**, not inside Docker. The container
+> reaches it via `host.docker.internal:27017`. Make sure your local `mongod` is started
+> before running `docker compose up`. Pass `--with-mongo` to `vedaai.sh` (or add
+> `-f docker-compose.mongo.yml`) to run MongoDB in a container instead.
 
 ---
 
 ## 1 · Set up environment files
 
 ```bash
-# Backend — copy and fill in your LLM API key
-cp backend/.env.example backend/.env
-
 # Frontend — copy and fill in your AI provider + key
-cp frontend/.env.example frontend/.env.local
+cp apps/web/.env.example apps/web/.env.local
 ```
 
-Minimum edits for **backend/.env**:
-```
-LLM_PROVIDER=gemini          # or anthropic / openai
-GEMINI_API_KEY=<your-key>
-JWT_SECRET=<any-random-string>
-```
-
-Minimum edits for **frontend/.env.local**:
+Minimum edits for **apps/web/.env.local**:
 ```
 AI_PROVIDER=gemini           # or anthropic / openai
 GEMINI_API_KEY=<your-key>
+MONGO_URI=mongodb://host.docker.internal:27017/?...
+JWT_SECRET=<any-random-string>
 ```
 
 ---
@@ -46,8 +39,8 @@ GEMINI_API_KEY=<your-key>
 docker compose up --build
 ```
 
-On first run this will take a few minutes (downloading base images, installing Python
-packages, and building the Next.js app).
+On first run this will take a few minutes (downloading base images and building the
+Next.js app).
 
 ---
 
@@ -56,8 +49,6 @@ packages, and building the Next.js app).
 | Service | URL |
 |---------|-----|
 | Frontend (Next.js) | http://localhost:3000 |
-| API (FastAPI docs) | http://localhost:8000/docs |
-| Redis | localhost:6379 |
 
 ---
 
@@ -67,18 +58,15 @@ packages, and building the Next.js app).
 # Start in the background
 docker compose up --build -d
 
-# Tail logs for all services
-docker compose logs -f
-
-# Tail logs for one service
+# Tail logs
 docker compose logs -f frontend
-docker compose logs -f api
-docker compose logs -f worker
 
 # Stop everything
 docker compose down
 
-# Rebuild a single service after code changes
+# Rebuild after code changes
 docker compose up --build frontend
-docker compose up --build api worker
 ```
+
+See also `./vedaai.sh` for a wrapper script around these commands (`up`, `logs`,
+`health`, `--with-mongo`, ...).
