@@ -60,19 +60,19 @@ abstract class OrgScopedRepository<T extends Entity> {
     return docs.map((d) => this.hydrate(d) as T);
   }
 
+  // No session/transaction here on purpose — see the UnitOfWork class comment
+  // in session.ts. Nothing in this app reads back an uncommitted write from
+  // earlier in the same request, so plain reads are fine and don't risk
+  // holding a transaction open across unrelated, possibly slow work.
   async findOne(query: Record<string, unknown>): Promise<T | null> {
     assertOrgFilter(query);
-    const doc = await this.collection.findOne(query as Filter<Record<string, unknown>>, {
-      session: this.session.session,
-    });
+    const doc = await this.collection.findOne(query as Filter<Record<string, unknown>>);
     return this.hydrate(doc as Record<string, unknown> | null);
   }
 
   async find(query: Record<string, unknown>, sort?: Sort): Promise<T[]> {
     assertOrgFilter(query);
-    let cursor = this.collection.find(query as Filter<Record<string, unknown>>, {
-      session: this.session.session,
-    });
+    let cursor = this.collection.find(query as Filter<Record<string, unknown>>);
     if (sort) cursor = cursor.sort(sort);
     const docs = await cursor.toArray();
     return this.hydrateAll(docs as unknown as Record<string, unknown>[]);
@@ -158,6 +158,15 @@ export class QuestionRepository extends OrgScopedRepository<Question> {
   forAssessment(organizationId: string, assessmentId: string) {
     return this.find(this.scoped(organizationId, { assessmentId }), { orderIndex: 1 });
   }
+
+  /** Reprocessing replaces the whole question set, so this clears it first —
+   * mirrors MappingRepository.clearForAssessment. Returns the ids removed, so the
+   * caller can also clear their now-orphaned QuestionRegion rows. */
+  async clearForAssessment(organizationId: string, assessmentId: string): Promise<string[]> {
+    const rows = await this.forAssessment(organizationId, assessmentId);
+    for (const row of rows) this.session.delete(this.collectionName, row.id);
+    return rows.map((row) => row.id);
+  }
 }
 
 export class QuestionRegionRepository extends OrgScopedRepository<QuestionRegion> {
@@ -167,6 +176,12 @@ export class QuestionRegionRepository extends OrgScopedRepository<QuestionRegion
     if (!questionIds.length) return Promise.resolve([]);
     return this.find(this.scoped(organizationId, { questionId: { $in: questionIds } }));
   }
+
+  async clearForQuestions(organizationId: string, questionIds: string[]): Promise<void> {
+    if (!questionIds.length) return;
+    const rows = await this.forQuestions(organizationId, questionIds);
+    for (const row of rows) this.session.delete(this.collectionName, row.id);
+  }
 }
 
 export class AnswerRepository extends OrgScopedRepository<Answer> {
@@ -174,6 +189,15 @@ export class AnswerRepository extends OrgScopedRepository<Answer> {
 
   forAssessment(organizationId: string, assessmentId: string) {
     return this.find(this.scoped(organizationId, { assessmentId }));
+  }
+
+  /** Reprocessing replaces the whole answer set, so this clears it first — mirrors
+   * MappingRepository.clearForAssessment. Returns the ids removed, so the caller can
+   * also clear their now-orphaned AnswerRegion rows. */
+  async clearForAssessment(organizationId: string, assessmentId: string): Promise<string[]> {
+    const rows = await this.forAssessment(organizationId, assessmentId);
+    for (const row of rows) this.session.delete(this.collectionName, row.id);
+    return rows.map((row) => row.id);
   }
 }
 
@@ -183,6 +207,12 @@ export class AnswerRegionRepository extends OrgScopedRepository<AnswerRegion> {
   forAnswers(organizationId: string, answerIds: string[]) {
     if (!answerIds.length) return Promise.resolve([]);
     return this.find(this.scoped(organizationId, { answerId: { $in: answerIds } }));
+  }
+
+  async clearForAnswers(organizationId: string, answerIds: string[]): Promise<void> {
+    if (!answerIds.length) return;
+    const rows = await this.forAnswers(organizationId, answerIds);
+    for (const row of rows) this.session.delete(this.collectionName, row.id);
   }
 }
 
@@ -205,6 +235,12 @@ export class GradeRepository extends OrgScopedRepository<GradeRow> {
   forMappings(organizationId: string, mappingIds: string[]) {
     if (!mappingIds.length) return Promise.resolve([]);
     return this.find(this.scoped(organizationId, { mappingId: { $in: mappingIds } }));
+  }
+
+  async clearForMappings(organizationId: string, mappingIds: string[]): Promise<void> {
+    if (!mappingIds.length) return;
+    const rows = await this.forMappings(organizationId, mappingIds);
+    for (const row of rows) this.session.delete(this.collectionName, row.id);
   }
 }
 

@@ -11,7 +11,7 @@
  * same connection pool instead of opening a new one per request (the standard
  * pattern for MongoDB + Vercel/Next.js).
  */
-import { MongoClient, type ClientSession, type Db } from "mongodb";
+import { MongoClient, type Db } from "mongodb";
 import { settings } from "@/lib/server/config";
 import { newId, type Entity } from "./base";
 
@@ -49,7 +49,15 @@ declare global {
 function getClientPromise(): Promise<MongoClient> {
   if (!global.__mongoClientPromise) {
     const client = new MongoClient(settings.mongoUri, { maxPoolSize: 10 });
-    global.__mongoClientPromise = client.connect();
+    const connecting = client.connect();
+    // A rejected promise is still a truthy cached value — without this, one failed
+    // connection attempt (a transient network blip, Atlas hiccup, etc.) would wedge
+    // every request for the rest of the process's life behind the same permanently-
+    // rejected promise, since nothing would ever try `new MongoClient(...)` again.
+    connecting.catch(() => {
+      if (global.__mongoClientPromise === connecting) global.__mongoClientPromise = undefined;
+    });
+    global.__mongoClientPromise = connecting;
   }
   return global.__mongoClientPromise;
 }
@@ -61,16 +69,55 @@ export async function getDatabase(): Promise<Db> {
 
 export async function ensureIndexes(): Promise<void> {
   const db = await getDatabase();
-  for (const { collection, keys, unique } of INDEXES) {
-    await db.collection(collection).createIndex(keys, { unique });
+  const byCollection = new Map<string, typeof INDEXES>();
+  for (const spec of INDEXES) {
+    const list = byCollection.get(spec.collection) ?? [];
+    list.push(spec);
+    byCollection.set(spec.collection, list);
+  }
+
+  for (const [collection, specs] of byCollection) {
+    const coll = db.collection(collection);
+    const declaredNames = new Set(specs.map(({ keys }) => indexName(keys)));
+    for (const spec of specs) {
+      await coll.createIndex(spec.keys, { unique: spec.unique });
+    }
+    // Drop anything left over from an earlier schema generation (e.g. a prior
+    // snake_case naming convention) that isn't declared above — a stale unique
+    // index on fields the current models don't populate silently 11000s every
+    // insert past the first, since Mongo indexes the missing fields as null.
+    const existing = await coll.listIndexes().toArray();
+    for (const index of existing) {
+      if (index.name === "_id_" || declaredNames.has(index.name!)) continue;
+      await coll.dropIndex(index.name!);
+    }
   }
 }
 
-/** Identity map + dirty check over a MongoDB database, wrapped in a real transaction. */
+function indexName(keys: Record<string, 1>): string {
+  return Object.entries(keys)
+    .map(([field, dir]) => `${field}_${dir}`)
+    .join("_");
+}
+
+/**
+ * Identity map + dirty check over a MongoDB database.
+ *
+ * Writes are flushed inside a short-lived multi-document transaction (Atlas is
+ * always a replica set) so the batch of pages/blocks/etc. that make up one
+ * logical change lands atomically. That transaction is scoped to `flush()`
+ * itself, not to the request as a whole — an earlier version started it lazily
+ * on the first read and held it open for the rest of the request, which meant
+ * it was still open across `extractDocument()`'s OCR/LLM calls. Those can run
+ * well past MongoDB's ~60s transaction lifetime limit, so the server would
+ * abort the transaction out from under a still-running request and every
+ * write after that point failed with `NoSuchTransaction`. Reads don't need
+ * transactional isolation here (nothing reads back an uncommitted write from
+ * earlier in the same request), so they run as plain, session-less finds.
+ */
 export class UnitOfWork {
   readonly db: Db;
   private readonly client: MongoClient;
-  private clientSession: ClientSession | null = null;
   private identity = new Map<string, Entity & { __collection: string }>();
   private snapshots = new Map<string, Record<string, unknown> | undefined>();
   private deleted = new Map<string, { __collection: string; id: string }>();
@@ -82,14 +129,6 @@ export class UnitOfWork {
 
   private key(collection: string, id: string): string {
     return `${collection}:${id}`;
-  }
-
-  get session(): ClientSession {
-    if (!this.clientSession) {
-      this.clientSession = this.client.startSession();
-      this.clientSession.startTransaction();
-    }
-    return this.clientSession;
   }
 
   /** Register an entity read from Mongo, returning the instance already tracked if
@@ -121,13 +160,9 @@ export class UnitOfWork {
   }
 
   async flush(): Promise<void> {
-    for (const { __collection, id } of this.deleted.values()) {
-      await this.db
-        .collection<MongoDoc>(__collection)
-        .deleteOne({ _id: id }, { session: this.clientSession ?? undefined });
-    }
-    this.deleted.clear();
+    const deletes = [...this.deleted.values()];
 
+    const writes: Array<{ key: string; collection: string; toWrite: Record<string, unknown> }> = [];
     for (const [key, entity] of this.identity) {
       const { __collection, ...rest } = entity;
       const document = toPlain(rest as unknown as Entity);
@@ -136,29 +171,42 @@ export class UnitOfWork {
       if (snapshot) {
         (rest as Entity).updatedAt = new Date();
       }
-      const toWrite = toPlain(rest as unknown as Entity);
-      await this.db
-        .collection<MongoDoc>(__collection)
-        .replaceOne({ _id: rest.id }, mongoDoc(toWrite), { upsert: true, session: this.clientSession ?? undefined });
-      this.snapshots.set(key, toWrite);
+      writes.push({ key, collection: __collection, toWrite: toPlain(rest as unknown as Entity) });
     }
+
+    if (deletes.length === 0 && writes.length === 0) return;
+
+    const clientSession = this.client.startSession();
+    try {
+      clientSession.startTransaction();
+      for (const { __collection, id } of deletes) {
+        await this.db.collection<MongoDoc>(__collection).deleteOne({ _id: id }, { session: clientSession });
+      }
+      for (const { collection, toWrite } of writes) {
+        await this.db
+          .collection<MongoDoc>(collection)
+          .replaceOne({ _id: toWrite.id as string }, mongoDoc(toWrite), { upsert: true, session: clientSession });
+      }
+      await clientSession.commitTransaction();
+    } catch (err) {
+      await clientSession.abortTransaction().catch(() => undefined);
+      throw err;
+    } finally {
+      await clientSession.endSession();
+    }
+
+    this.deleted.clear();
+    for (const { key, toWrite } of writes) this.snapshots.set(key, toWrite);
   }
 
   async commit(): Promise<void> {
     await this.flush();
-    if (this.clientSession) {
-      await this.clientSession.commitTransaction();
-      await this.clientSession.endSession();
-      this.clientSession = null;
-    }
   }
 
   async rollback(): Promise<void> {
-    if (this.clientSession) {
-      await this.clientSession.abortTransaction();
-      await this.clientSession.endSession();
-      this.clientSession = null;
-    }
+    // Writes already made it to Mongo transactionally inside their own flush()
+    // call, so there is nothing left to abort here — this only discards the
+    // in-memory identity map so a retried request starts clean.
     this.expireAll();
   }
 
@@ -169,11 +217,6 @@ export class UnitOfWork {
   }
 
   async close(): Promise<void> {
-    if (this.clientSession) {
-      await this.clientSession.abortTransaction().catch(() => undefined);
-      await this.clientSession.endSession();
-      this.clientSession = null;
-    }
     this.expireAll();
   }
 }

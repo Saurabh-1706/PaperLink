@@ -62,10 +62,13 @@ type Part = { text: string } | { inlineData: { mimeType: string; data: string } 
 async function invoke(model: string, parts: Part[]): Promise<string | null> {
   const key = `gemini:${model}`;
   if (breaker.isOpen(key)) return null;
-  await rateLimit.acquire(key, settings.llmRequestsPerMinute);
 
+  // Checked before pacing, not after: there is no point spending this model's
+  // rate-limit budget on a call that cannot be made at all.
   const genai = getClient();
   if (!genai) return null;
+
+  await rateLimit.acquire(key, settings.llmRequestsPerMinute);
 
   try {
     const response = await genai.models.generateContent({
@@ -75,15 +78,40 @@ async function invoke(model: string, parts: Part[]): Promise<string | null> {
     });
     return response.text ?? null;
   } catch (err) {
-    if (breaker.isQuotaError(err)) {
+    // Every failure here returns null, which moves the cascade to the next model.
+    // What differs is whether this model is worth trying again on the *next* call:
+    //   - retired / inaccessible (404, 403): nothing changes in the next few
+    //     seconds, so cool it down for a long while — otherwise every page pays a
+    //     wasted round trip to a dead model id before falling through.
+    //   - quota (429): cool down for the configured quota window.
+    //   - transient (503 "high demand", other 5xx, network): do NOT cool down;
+    //     skip it for this call only and keep it eligible for the next one.
+    if (breaker.isUnavailableError(err)) {
+      breaker.trip(key, settings.llmUnavailableCooldownSeconds);
+    } else if (breaker.isQuotaError(err)) {
       breaker.trip(key);
     }
+    // Returning null is a deliberate, silent degradation for the *caller* (every
+    // one of them has a deterministic fallback), but it must not be silent for the
+    // operator: a permanent misconfiguration — a retired model id, a revoked key —
+    // looks exactly like "the fallback ran", so without this the whole cascade can
+    // fail on every page and the only symptom is empty OCR output.
+    console.error(
+      `[gemini] ${model} call failed:`,
+      (err as { status?: number })?.status ?? "",
+      (err as { message?: string })?.message ?? err
+    );
     return null;
   }
 }
 
-/** Walks `cascade` in order, returning the first model's parsed JSON result, or null
- * if every model failed/was cooling down. Callers must have a deterministic fallback. */
+/**
+ * Walks `cascade` in order and returns the first usable result. ANY failure of a
+ * model — unavailable, quota-refused, overloaded, cooling down, or a reply that
+ * doesn't parse as JSON — moves on to the next model in the list; only when every
+ * one of them has failed does this return null. Callers must have a deterministic
+ * fallback for that case.
+ */
 export async function callWithCascade<T = unknown>(
   cascade: readonly string[],
   parts: Part[]
@@ -93,7 +121,11 @@ export async function callWithCascade<T = unknown>(
     if (text === null) continue;
     const parsed = parseJson<T>(text);
     if (parsed !== null) return parsed;
+    // Reached the model but got back something unparseable — that is this model
+    // failing to honour the contract, so it falls through to the next one too.
+    console.error(`[gemini] ${model} returned an unparseable response`);
   }
+  console.error(`[gemini] every model in the cascade failed: ${cascade.join(", ")}`);
   return null;
 }
 

@@ -1,0 +1,35 @@
+# Core API
+fastapi>=0.115
+uvicorn[standard]>=0.32
+pydantic>=2.9
+pydantic-settings>=2.5
+python-multipart>=0.0.12
+email-validator>=2.2
+
+# Auth
+pyjwt>=2.9
+argon2-cffi>=23.1
+
+# Persistence (MongoDB; GridFS ships inside pymongo)
+pymongo>=4.9
+# Async processing
+celery>=5.4
+redis>=5.1
+
+# Documents / extraction
+pymupdf>=1.24
+pillow>=10.4
+
+# OCR (installed in the worker image; imported lazily)
+paddleocr>=2.8
+paddlepaddle>=2.6
+
+# Mapping / scoring
+scipy>=1.14
+numpy>=2.0
+rapidfuzz>=3.9
+
+# Orchestration + LLM utilities
+langgraph>=0.2
+langchain-core>=0.3
+langchain-google-genai>=2.0

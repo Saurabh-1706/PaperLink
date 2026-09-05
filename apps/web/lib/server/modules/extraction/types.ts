@@ -42,3 +42,15 @@ export interface IRDocument {
 export function irPageByNumber(doc: IRDocument, number: number): IRPage | undefined {
   return doc.pages.find((p) => p.pageNumber === number);
 }
+
+/** Every block in the document, page-then-reading-order — the canonical document-wide
+ * reading order the question pipeline walks. Port of IRDocument.ordered_blocks(). */
+export function orderedBlocks(doc: IRDocument): Array<{ page: number; block: IRBlock }> {
+  const out: Array<{ page: number; block: IRBlock }> = [];
+  for (const page of [...doc.pages].sort((a, b) => a.pageNumber - b.pageNumber)) {
+    for (const block of [...page.blocks].sort((a, b) => a.readingOrder - b.readingOrder)) {
+      out.push({ page: page.pageNumber, block });
+    }
+  }
+  return out;
+}

@@ -5,21 +5,30 @@
  * contract are exactly what that proxy's allow-list already exposed, so nothing
  * above this layer (httpClient, endpoints.ts, adapters.ts, feature API wrappers, any
  * UI component) needs to change.
- *
- * Routes not yet built (question/answer pipeline, mapping, grading — Phase 2+ in the
- * migration plan) return a typed 501 for actions, or an empty/zeroed DTO for reads,
- * so a assessment page that hasn't been processed yet renders its normal empty state
- * instead of an error.
  */
 import { withSession } from "@/lib/server/db/session";
 import { getStorage } from "@/lib/server/storage/factory";
-import { AssessmentRepository, DocumentRepository, PageRepository } from "@/lib/server/db/repositories";
+import {
+  AnswerRegionRepository,
+  AnswerRepository,
+  AssessmentRepository,
+  DocumentRepository,
+  GradeRepository,
+  JobRepository,
+  MappingRepository,
+  PageRepository,
+  QuestionRegionRepository,
+  QuestionRepository,
+} from "@/lib/server/db/repositories";
 import { AssessmentService } from "@/lib/server/modules/assessments/service";
+import { AssessmentProcessingService } from "@/lib/server/modules/assessments/processing";
 import { DocumentService } from "@/lib/server/modules/documents/service";
 import { normalizeUploadToPdf } from "@/lib/server/modules/documents/validation";
-import { assessmentOut, documentOut } from "./dto";
+import { assessmentSummary } from "@/lib/server/modules/grading/engine";
+import { answerRegions } from "./regions";
+import { answerOut, assessmentOut, documentOut, gradeOut, jobOut, mappingOut, questionOut, resultsOut } from "./dto";
 import type { Principal } from "@/lib/server/auth/principal";
-import { NotFoundError, NotImplementedError, ValidationFailedError } from "@/lib/server/errors";
+import { NotFoundError, ValidationFailedError } from "@/lib/server/errors";
 
 export interface DispatchResult {
   status: number;
@@ -28,16 +37,7 @@ export interface DispatchResult {
   contentType?: string;
 }
 
-const EMPTY_RESULTS = (assessmentId: string) => ({
-  assessment_id: assessmentId,
-  mapping_count: 0,
-  needs_review: 0,
-  unanswered: 0,
-  unmatched: 0,
-  total_score: 0,
-  max_score: 0,
-  percentage: 0,
-});
+const REVIEW_STATUSES = new Set(["auto_accepted", "needs_review", "human_confirmed", "human_corrected"]);
 
 export async function dispatch(opts: {
   method: string;
@@ -56,25 +56,16 @@ export async function dispatch(opts: {
       return uploadDocument(principal, id, sub === "question-paper" ? "question_paper" : "answer_sheet", body);
     }
     if (segments.length === 3 && method === "POST" && (sub === "process" || sub === "remap")) {
-      throw new NotImplementedError(
-        "Question/answer extraction, mapping and grading ship in a later phase of the Next.js migration."
-      );
+      return processAssessment(principal, id, sub === "remap");
     }
     if (segments.length === 4 && method === "GET" && sub === "jobs") {
-      throw new NotFoundError("No such job.", { jobId: subId });
+      return jobStatus(principal, id, subId);
     }
-    if (segments.length === 3 && method === "GET" && (sub === "questions" || sub === "answers" || sub === "mappings" || sub === "grades")) {
-      await withSession(async (session) => {
-        await new AssessmentRepository(session).getOrThrow(principal.organizationId, id);
-      });
-      return { status: 200, json: [] };
-    }
-    if (segments.length === 3 && method === "GET" && sub === "results") {
-      await withSession(async (session) => {
-        await new AssessmentRepository(session).getOrThrow(principal.organizationId, id);
-      });
-      return { status: 200, json: EMPTY_RESULTS(id) };
-    }
+    if (segments.length === 3 && method === "GET" && sub === "questions") return listQuestions(principal, id);
+    if (segments.length === 3 && method === "GET" && sub === "answers") return listAnswers(principal, id);
+    if (segments.length === 3 && method === "GET" && sub === "mappings") return listMappings(principal, id);
+    if (segments.length === 3 && method === "GET" && sub === "grades") return listGrades(principal, id);
+    if (segments.length === 3 && method === "GET" && sub === "results") return getResults(principal, id);
   }
 
   if (root === "documents") {
@@ -87,7 +78,7 @@ export async function dispatch(opts: {
   }
 
   if (root === "mappings" && segments.length === 2 && method === "PATCH") {
-    throw new NotImplementedError("Mapping review ships with the mapping engine in a later phase.");
+    return correctMapping(principal, id, body);
   }
 
   throw new NotFoundError("No such endpoint.");
@@ -147,6 +138,133 @@ async function uploadDocument(
   });
 
   return { status: 202, json: documentOut(result.document, result.created) };
+}
+
+/**
+ * Job creation is its own committed transaction, then the pipeline runs in a
+ * second one — `AssessmentProcessingService.process()` never throws (a failure is
+ * recorded on the job and swallowed, see processing.ts), so this always returns a
+ * job the client can read, whether it ended up queued-then-succeeded or failed.
+ */
+async function processAssessment(principal: Principal, assessmentId: string, remapOnly: boolean): Promise<DispatchResult> {
+  const job = await withSession(async (session) => {
+    await new AssessmentRepository(session).getOrThrow(principal.organizationId, assessmentId);
+    const processing = new AssessmentProcessingService(session, getStorage(session));
+    return processing.createJob(principal.organizationId, assessmentId, principal.userId);
+  });
+
+  await withSession(async (session) => {
+    const processing = new AssessmentProcessingService(session, getStorage(session));
+    await processing.process(principal.organizationId, assessmentId, job.id, remapOnly);
+  });
+
+  const finalJob = await withSession((session) => new JobRepository(session).getOrThrow(principal.organizationId, job.id));
+  return { status: 202, json: jobOut(finalJob) };
+}
+
+async function jobStatus(principal: Principal, assessmentId: string, jobId: string): Promise<DispatchResult> {
+  const job = await withSession(async (session) => {
+    await new AssessmentRepository(session).getOrThrow(principal.organizationId, assessmentId);
+    return new JobRepository(session).getOrThrow(principal.organizationId, jobId);
+  });
+  return { status: 200, json: jobOut(job) };
+}
+
+async function listQuestions(principal: Principal, assessmentId: string): Promise<DispatchResult> {
+  const json = await withSession(async (session) => {
+    await new AssessmentRepository(session).getOrThrow(principal.organizationId, assessmentId);
+    const rows = await new QuestionRepository(session).forAssessment(principal.organizationId, assessmentId);
+    const regionRows = await new QuestionRegionRepository(session).forQuestions(principal.organizationId, rows.map((r) => r.id));
+    const grouped = new Map<string, Array<{ page: number; bbox: { x1: number; y1: number; x2: number; y2: number } }>>();
+    for (const region of regionRows) {
+      const list = grouped.get(region.questionId) ?? [];
+      list.push({ page: region.pageNumber, bbox: { x1: region.bbox[0], y1: region.bbox[1], x2: region.bbox[2], y2: region.bbox[3] } });
+      grouped.set(region.questionId, list);
+    }
+    return rows.map((row) => questionOut(row, grouped.get(row.id) ?? []));
+  });
+  return { status: 200, json };
+}
+
+async function listAnswers(principal: Principal, assessmentId: string): Promise<DispatchResult> {
+  const json = await withSession(async (session) => {
+    await new AssessmentRepository(session).getOrThrow(principal.organizationId, assessmentId);
+    const rows = await new AnswerRepository(session).forAssessment(principal.organizationId, assessmentId);
+    const regionRows = await new AnswerRegionRepository(session).forAnswers(principal.organizationId, rows.map((r) => r.id));
+    const grouped = new Map<string, Array<{ page: number; bbox: { x1: number; y1: number; x2: number; y2: number } }>>();
+    for (const region of regionRows) {
+      const list = grouped.get(region.answerId) ?? [];
+      list.push({ page: region.pageNumber, bbox: { x1: region.bbox[0], y1: region.bbox[1], x2: region.bbox[2], y2: region.bbox[3] } });
+      grouped.set(region.answerId, list);
+    }
+    return rows.map((row) => answerOut(row, grouped.get(row.id) ?? []));
+  });
+  return { status: 200, json };
+}
+
+async function listMappings(principal: Principal, assessmentId: string): Promise<DispatchResult> {
+  const json = await withSession(async (session) => {
+    await new AssessmentRepository(session).getOrThrow(principal.organizationId, assessmentId);
+    const rows = await new MappingRepository(session).forAssessment(principal.organizationId, assessmentId);
+    // Multi-page answers own regions on their continuation rows too.
+    const grouped = await answerRegions(session, principal.organizationId, assessmentId);
+    return rows.map((row) => mappingOut(row, grouped.get(row.answerId ?? "") ?? []));
+  });
+  return { status: 200, json };
+}
+
+async function listGrades(principal: Principal, assessmentId: string): Promise<DispatchResult> {
+  const json = await withSession(async (session) => {
+    await new AssessmentRepository(session).getOrThrow(principal.organizationId, assessmentId);
+    const rows = await new MappingRepository(session).forAssessment(principal.organizationId, assessmentId);
+    const grades = await new GradeRepository(session).forMappings(principal.organizationId, rows.map((r) => r.id));
+    return grades.map(gradeOut);
+  });
+  return { status: 200, json };
+}
+
+async function getResults(principal: Principal, assessmentId: string): Promise<DispatchResult> {
+  const json = await withSession(async (session) => {
+    await new AssessmentRepository(session).getOrThrow(principal.organizationId, assessmentId);
+    const rows = await new MappingRepository(session).forAssessment(principal.organizationId, assessmentId);
+    const grades = await new GradeRepository(session).forMappings(principal.organizationId, rows.map((r) => r.id));
+    const summary = assessmentSummary(grades.map((g) => ({ method: g.method, score: g.score, maxScore: g.maxScore })));
+    return resultsOut(assessmentId, rows, summary);
+  });
+  return { status: 200, json };
+}
+
+async function correctMapping(principal: Principal, mappingId: string, body: unknown): Promise<DispatchResult> {
+  const payload = (body ?? {}) as { answer_id?: unknown; review_status?: unknown };
+  const json = await withSession(async (session) => {
+    const mappings = new MappingRepository(session);
+    const row = await mappings.getOrThrow(principal.organizationId, mappingId);
+
+    if (payload.answer_id !== undefined && payload.answer_id !== null) {
+      if (typeof payload.answer_id !== "string") throw new ValidationFailedError("answer_id must be a string.");
+      const answer = await new AnswerRepository(session).getOrThrow(principal.organizationId, payload.answer_id);
+      if (answer.assessmentId !== row.assessmentId) {
+        throw new ValidationFailedError("The answer belongs to a different assessment.");
+      }
+      row.answerId = answer.id;
+      row.reviewStatus = "human_corrected";
+      if (row.questionId && row.mappingType === "unanswered") row.mappingType = "direct";
+    } else if (payload.review_status !== undefined && payload.review_status !== null) {
+      if (typeof payload.review_status !== "string" || !REVIEW_STATUSES.has(payload.review_status)) {
+        throw new ValidationFailedError("Unknown review_status.", { value: payload.review_status });
+      }
+      row.reviewStatus = payload.review_status;
+    } else {
+      throw new ValidationFailedError("Provide answer_id or review_status.");
+    }
+
+    row.evidence = { ...(row.evidence || {}), corrected_by: principal.userId };
+    await session.flush();
+
+    const grouped = await answerRegions(session, principal.organizationId, row.assessmentId);
+    return mappingOut(row, grouped.get(row.answerId ?? "") ?? []);
+  });
+  return { status: 200, json };
 }
 
 async function pageImage(principal: Principal, documentId: string, pageNumber: number): Promise<DispatchResult> {

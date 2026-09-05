@@ -45,7 +45,12 @@ export class DocumentService {
       return { document: existing, ir: await this.loadIr(existing), created: false };
     }
 
-    const document: Document = {
+    // `add()` tracks a shallow *copy* of the entity, not the object passed in — every
+    // later mutation must go through the returned reference or it never reaches the
+    // copy that flush() actually writes (this previously left storageUri/irUri/
+    // markdownUri/classification stuck at their initial values forever, since all
+    // four are only known after this point).
+    const document: Document = this.documents.add({
       ...newOrgOwned(organizationId, createdBy),
       assessmentId,
       kind,
@@ -56,8 +61,7 @@ export class DocumentService {
       classification: null,
       markdownUri: null,
       irUri: null,
-    };
-    this.documents.add(document);
+    });
 
     const meta = { organizationId, assessmentId, documentId: document.id, kind };
     document.storageUri = await this.storage.put(

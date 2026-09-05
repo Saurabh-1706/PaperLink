@@ -30,14 +30,17 @@ export const settings = {
 
   geminiApiKey: process.env.GEMINI_API_KEY ?? "",
   geminiModelCascade: csv("GEMINI_MODEL_CASCADE", [
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-2.0-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
   ]),
   get geminiVisionModelCascade(): string[] {
     return csv("GEMINI_VISION_MODEL_CASCADE", this.geminiModelCascade);
   },
   llmQuotaCooldownSeconds: num("LLM_QUOTA_COOLDOWN_SECONDS", 900),
+  // Longer than the quota window on purpose: a 404/403 means the model id is retired
+  // or the key can't reach it, which won't fix itself the way a rate limit does.
+  llmUnavailableCooldownSeconds: num("LLM_UNAVAILABLE_COOLDOWN_SECONDS", 3600),
   llmRequestsPerMinute: num("LLM_REQUESTS_PER_MINUTE", 15),
 
   renderDpi: num("RENDER_DPI", 200),
@@ -46,6 +49,17 @@ export const settings = {
   maxPages: num("MAX_PAGES", 200),
   searchableCoverageThreshold: num("SEARCHABLE_COVERAGE_THRESHOLD", 0.02),
   blockConfidenceThreshold: num("BLOCK_CONFIDENCE_THRESHOLD", 0.6),
+
+  // Per-stage confidence thresholds, tuned from the eval suite. Verbatim from
+  // backend/app/core/config.py.
+  questionConfidenceThreshold: num("QUESTION_CONFIDENCE_THRESHOLD", 0.7),
+  answerConfidenceThreshold: num("ANSWER_CONFIDENCE_THRESHOLD", 0.65),
+  mappingAcceptThreshold: num("MAPPING_ACCEPT_THRESHOLD", 0.7),
+  mappingReviewThreshold: num("MAPPING_REVIEW_THRESHOLD", 0.45),
+  mappingAmbiguousMargin: num("MAPPING_AMBIGUOUS_MARGIN", 0.1),
+  // A vision provider's encoded-payload cap; the page image is JPEG-recompressed if
+  // its base64 size would exceed this (answer_pipeline/vision.ts).
+  maxInlineImageBytes: num("MAX_INLINE_IMAGE_BYTES", 20 * 1024 * 1024),
 
   jwtSecret: str("JWT_SECRET", "change-me"),
   jwtAlgorithm: str("JWT_ALGORITHM", "HS256"),

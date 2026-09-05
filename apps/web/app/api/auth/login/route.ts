@@ -37,6 +37,11 @@ export async function POST(req: NextRequest) {
     const status = err instanceof AppError ? err.statusCode : 500;
     const message = err instanceof AppError ? err.message : "Login failed.";
     const code = err instanceof AppError ? err.code : "authentication_failed";
+    if (!(err instanceof AppError)) {
+      // Never swallow an unexpected failure (e.g. the database being unreachable)
+      // silently — it looks identical to "wrong password" otherwise.
+      console.error("[auth/login] unexpected error:", err);
+    }
     return NextResponse.json({ error: { code, message } }, { status });
   }
 }
