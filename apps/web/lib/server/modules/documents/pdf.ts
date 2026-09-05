@@ -14,6 +14,7 @@
 import { createCanvas } from "@napi-rs/canvas";
 import { PDFDocument as PdfLibDocument } from "pdf-lib";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
+import * as pdfjsWorker from "pdfjs-dist/legacy/build/pdf.worker.mjs";
 import type { PDFPageProxy, PageViewport } from "pdfjs-dist";
 
 /** pdfjs-dist's `TextItem` type isn't re-exported from the package root (only from an
@@ -29,8 +30,21 @@ import { CorruptDocumentError, EncryptedPdfError, TooManyPagesError } from "@/li
 import type { PageClassification } from "@/lib/server/modules/extraction/types";
 
 // pdfjs-dist's legacy build (ESM, since v4 dropped the CJS build) works without a
-// browser DOM as long as it is given a canvas factory; there's no worker here since
-// we call it directly, in-process, one Vercel function invocation at a time.
+// browser DOM as long as it is given a canvas factory.
+//
+// There IS still a worker, though — pdfjs always routes through one. With no Web
+// Worker in Node it falls back to a "fake worker": same thread, but it must still
+// LOAD the worker module, which it does via `await import(this.workerSrc)` marked
+// `webpackIgnore: true` (pdf.mjs, `_setupFakeWorkerGlobal`). A runtime-computed
+// specifier that bundlers are explicitly told to skip is invisible to Vercel's file
+// tracer, so pdf.worker.mjs never gets uploaded into the function and the load fails
+// there with `Setting up fake worker failed: Cannot find module .../pdf.worker.mjs`.
+// It only breaks once deployed: locally the file is simply present on disk.
+//
+// Importing the worker statically (a literal specifier IS traceable, so the file
+// ships) and publishing it here makes pdfjs take its `#mainThreadWorkerMessageHandler`
+// branch, which is checked BEFORE that dynamic import and skips it entirely.
+(globalThis as { pdfjsWorker?: unknown }).pdfjsWorker = pdfjsWorker;
 
 export interface NativeWord {
   text: string;
